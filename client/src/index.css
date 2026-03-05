@@ -1,0 +1,174 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import '@xyflow/react/dist/style.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+  
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  --font-sans: 'Inter', sans-serif;
+}
+
+/* LIGHT MODE - Denver Broncos Vintage Palette: Orange, Navy, Tan/Brown accents */
+:root {
+  /* Warm cream background for vintage feel */
+  --background: 35 30% 97%;
+  /* Broncos Navy (#002244) - Primary text */
+  --foreground: 213 100% 13%;
+
+  /* Soft tan for muted backgrounds */
+  --muted: 35 25% 94%; 
+  /* Muted navy for secondary text */
+  --muted-foreground: 213 40% 35%;
+
+  /* White cards with warm tint */
+  --card: 35 20% 99%;
+  --card-foreground: 213 100% 13%;
+
+  --popover: 35 20% 99%;
+  --popover-foreground: 213 100% 13%;
+
+  /* Warm tan borders */
+  --border: 30 20% 85%;
+  --input: 30 20% 85%;
+
+  /* Primary Broncos Orange (#FB4F14) */
+  --primary: 15 97% 53%;
+  --primary-foreground: 0 0% 100%;
+
+  /* Secondary - Soft Orange/Tan (#F5E6D3) */
+  --secondary: 30 50% 90%;
+  --secondary-foreground: 213 100% 13%;
+
+  /* Accent - Vintage tan/brown */
+  --accent: 30 40% 88%;
+  --accent-foreground: 213 100% 13%;
+
+  /* Red-orange for errors */
+  --destructive: 0 70% 45%;
+  --destructive-foreground: 0 0% 100%;
+
+  /* Orange primary for focus rings */
+  --ring: 15 97% 53%;
+
+  --radius: 0.5rem; /* Slightly tighter corners for retro feel */
+
+  /* Sidebar - Broncos Navy */
+  --sidebar: 213 100% 13%;
+  --sidebar-foreground: 35 30% 97%;
+  --sidebar-primary: 15 97% 53%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 213 80% 20%;
+  --sidebar-accent-foreground: 35 30% 97%;
+  --sidebar-border: 213 60% 20%;
+  --sidebar-ring: 15 97% 53%;
+
+  /* Broncos Custom Colors */
+  --broncos-orange: 15 97% 53%;
+  --broncos-orange-light: 15 90% 65%;
+  --broncos-orange-dark: 15 97% 42%;
+  --broncos-navy: 213 100% 13%;
+  --broncos-navy-light: 213 60% 25%;
+  --broncos-tan: 30 45% 75%;
+  --broncos-brown: 30 40% 40%;
+}
+
+.dark {
+  /* Deep navy background */
+  --background: 213 80% 8%;
+  --foreground: 35 30% 95%;
+  --card: 213 70% 10%;
+  --card-foreground: 35 30% 95%;
+  --popover: 213 70% 10%;
+  --popover-foreground: 35 30% 95%;
+  /* Broncos Orange */
+  --primary: 15 97% 53%;
+  --primary-foreground: 0 0% 100%;
+  /* Darker tan for dark mode */
+  --secondary: 30 30% 25%;
+  --secondary-foreground: 35 30% 95%;
+  --muted: 213 50% 15%;
+  --muted-foreground: 35 20% 65%;
+  --accent: 30 30% 25%;
+  --accent-foreground: 35 30% 95%;
+  --destructive: 0 70% 45%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 213 40% 20%;
+  --input: 213 40% 20%;
+  --ring: 15 97% 53%;
+  
+  /* Sidebar - Deep navy */
+  --sidebar: 213 100% 6%;
+  --sidebar-foreground: 35 30% 95%;
+  --sidebar-primary: 15 97% 53%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 213 60% 18%;
+  --sidebar-accent-foreground: 35 30% 95%;
+  --sidebar-border: 213 50% 18%;
+  --sidebar-ring: 15 97% 53%;
+
+  /* Broncos Custom Colors (Dark Mode) */
+  --broncos-orange: 15 97% 53%;
+  --broncos-orange-light: 15 85% 60%;
+  --broncos-orange-dark: 15 97% 45%;
+  --broncos-navy: 213 100% 13%;
+  --broncos-navy-light: 213 60% 30%;
+  --broncos-tan: 30 35% 55%;
+  --broncos-brown: 30 35% 35%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
