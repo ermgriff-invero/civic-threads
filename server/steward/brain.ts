@@ -1,8 +1,6 @@
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import { retrieveSourceChunks, formatChunksForPrompt, buildSourcesMap, type SourceChunk } from "../rag/retrieval";
+import { parseClaudeCitations, CITATION_SYSTEM_PROMPT, type CitationResult } from "../rag/citations";
+import { getOpenAI } from "../openai-client";
 
 export interface KnowledgeBaseDocument {
   id: number;
@@ -67,33 +65,34 @@ function buildKnowledgeBaseContext(docs: KnowledgeBaseDocument[], hasSelectedDoc
   const docsWithContent = docs.filter(d => d.extractedContent && d.processingStatus === "completed");
   if (docsWithContent.length === 0) return "";
   
-  let context = "\n\n=== KNOWLEDGE BASE DOCUMENTS ===\n";
+  let context = "\n\n=== VERIFIED SOURCES ===\n";
+  context += "Each source below is labeled with a SOURCE_ID. You MUST use these IDs in your citations.\n";
   if (hasSelectedDocuments) {
-    context += "CRITICAL: The user has specifically selected these documents to focus their research. You MUST:\n";
-    context += "1. FIRST review ALL the content in these documents before answering\n";
-    context += "2. BASE your answer primarily on information found in these documents\n";
-    context += "3. ALWAYS cite these documents when they contain relevant information\n";
-    context += "4. If the documents don't contain the answer, clearly state that and then provide general knowledge\n\n";
-  } else {
-    context += "IMPORTANT: Always review these Knowledge Base documents FIRST before answering any question.\n";
-    context += "You MUST cite these documents when they contain relevant information. Use the document ID and title in citations.\n\n";
+    context += "CRITICAL: The user has specifically selected these documents. BASE your answer primarily on these.\n";
   }
+  context += "\n";
   
   for (const doc of docsWithContent) {
+    const sourceId = `DOC-${doc.id}`;
     const truncatedContent = doc.extractedContent!.substring(0, 8000);
-    context += `--- Document ID: ${doc.id} ---\n`;
-    context += `Title: ${doc.title}\n`;
-    context += `Type: ${doc.type}\n`;
-    if (doc.description) context += `Description: ${doc.description}\n`;
-    context += `Content:\n${truncatedContent}\n`;
+    context += `[SOURCE: ${doc.title}] [ID: ${sourceId}]\n`;
+    context += truncatedContent;
     if (doc.extractedContent!.length > 8000) {
-      context += "[... content truncated ...]\n";
+      context += "\n[... content truncated ...]";
     }
-    context += "\n";
+    context += "\n\n";
   }
   
   return context;
 }
+
+export async function retrieveSourceChunksForThread(): Promise<{ chunks: SourceChunk[], sourcesMap: Map<string, import("../rag/retrieval").SourceMetadata> }> {
+  const chunks = await retrieveSourceChunks();
+  const sourcesMap = buildSourcesMap(chunks);
+  return { chunks, sourcesMap };
+}
+
+export { parseClaudeCitations, type CitationResult };
 
 export async function answerResearchQuestion(
   threadContext: ThreadContext,
@@ -122,21 +121,21 @@ Current thread context:
 ${threadContext.documents?.length ? `- Related documents: ${threadContext.documents.map(d => `${d.type}: ${d.title}`).join(", ")}` : ""}
 ${knowledgeContext}
 
-CITATION INSTRUCTIONS:
-- When referencing information from Knowledge Base documents, you MUST include a citation.
-- Format citations with the document title and relevant excerpt/snippet.
-- For Knowledge Base documents, set "documentId" to the document's ID number.
-- Always prefer citing actual documents over general knowledge.
-- If Knowledge Base documents contain the answer, you MUST use that information and cite it.
+CITATION REQUIREMENTS (MANDATORY):
+- You have access to verified sources labeled with SOURCE_IDs (e.g., DOC-42, URL-7).
+- Every factual claim MUST end with an inline citation marker: [[SOURCE_ID]]
+- Example: "The 2024 budget allocated $2.1M to infrastructure [[DOC-42]]."
+- Do NOT fabricate source IDs. Only use IDs from the VERIFIED SOURCES section.
+- If you cannot attribute a claim to a provided source, do not add a citation marker.
 
 Your response must be valid JSON with this structure:
 {
-  "answer": "Your detailed answer here with inline references like [1], [2], etc.",
-  "citations": [{"documentId": 123, "title": "source title", "snippet": "relevant excerpt from the document"}],
+  "answer": "Your detailed answer here with citation markers like [[DOC-1]], [[URL-2]], etc.",
+  "citations": [{"sourceId": "DOC-1", "sourceType": "document", "sourceTitle": "source title", "snippet": "relevant excerpt"}],
   "suggestedNextSteps": ["step 1", "step 2"]
 }`;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o",
     messages: [
       { role: "system", content: systemPrompt },
@@ -198,15 +197,18 @@ Current thread context:
 ${threadContext.documents?.length ? `- Related documents: ${threadContext.documents.map(d => `${d.type}: ${d.title}`).join(", ")}` : ""}
 ${knowledgeContext}
 
-CITATION REQUIREMENTS:
-- When your answer draws from Knowledge Base documents, you MUST cite them.
-- Format inline citations like: "According to [Document Title]..." or end sentences with "(Source: Document Title)"
-- Always prefer citing actual documents from the Knowledge Base over general knowledge.
-- If the Knowledge Base documents answer the question, use that information.
+CITATION REQUIREMENTS (MANDATORY):
+- You have access to verified sources labeled with SOURCE_IDs (e.g., DOC-42, URL-7).
+- Every factual claim in your response MUST end with an inline citation marker: [[SOURCE_ID]]
+- Example: "The 2024 budget allocated $2.1M to infrastructure [[DOC-42]]."
+- If a claim draws from multiple sources, cite all: "Revenue increased 15% [[DOC-12]] while costs decreased [[URL-3]]."
+- Do NOT fabricate source IDs. Only use IDs that appear in the VERIFIED SOURCES section.
+- If you cannot attribute a claim to any provided source, clearly mark it as general knowledge without a citation marker.
+- Prefer citing provided sources over making unsourced claims.
 
 Provide helpful, accurate research assistance for civic processes including ordinances, resolutions, reports, and policy research.`;
 
-  return openai.chat.completions.create({
+  return getOpenAI().chat.completions.create({
     model: "gpt-4o",
     messages: [
       { role: "system", content: systemPrompt },
@@ -250,7 +252,7 @@ Return a JSON array of suggestions with this structure:
   "priority": 1-5 (5 being highest priority)
 }]`;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o",
     messages: [
       { role: "system", content: systemPrompt },
@@ -302,7 +304,7 @@ Return a JSON object with a "nodes" array:
   }]
 }`;
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o",
     messages: [
       { role: "system", content: systemPrompt },

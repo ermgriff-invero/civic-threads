@@ -11,6 +11,14 @@ The platform features:
 - AI-assisted content drafting based on historical decisions
 - Real-time collaboration indicators
 - **AI Thread Steward**: Intelligent assistant panel for research, suggestions, and ideal thread planning
+- **Linear Integration**: Backend-only agent tooling for project management (no user-facing UI)
+- **RBAC**: Profile-level Admin/PM roles; all authenticated users can create/edit threads and content
+- **Close Thread**: Thread owner or admin can close a thread, which archives all content to the Knowledge Center and locks the thread to read-only mode
+- **Thread Synthesis**: AI-powered merging of multiple threads into unified documents (Memo, Strategy Brief, Action Plan) via Anthropic Claude (claude-sonnet-4-6)
+- **Agenda Drop Box**: Full agenda builder with meeting management, item submission, admin approval workflow, drag-and-drop reordering, and publish/archive lifecycle. Any user can submit items to draft meetings; admins manage meetings and approve/reject/reorder items. Also supports "Send to Agenda" from thread canvas to drop work products into specific meetings.
+- **Dynamic Knowledge Gating**: Per-project configuration of which data sources the AI searches, with category toggles, year range filtering, and tag-based filtering
+- **Style Templates**: Upload example memos, ordinances, emails, etc. to teach the AI your municipality's writing tone and structure
+- **Word-Doc Document Preview**: Professional document rendering with serif fonts, letterhead headers, section formatting, and edit/preview toggle
 
 ## AI Thread Steward
 
@@ -58,8 +66,10 @@ Preferred communication style: Simple, everyday language.
 - **Build Tool**: Vite with custom plugins for Replit integration
 
 ### AI Integration
-- **Model**: OpenAI `gpt-4o` for all AI features (research, writing assist, suggestions, summaries)
+- **Model**: OpenAI `gpt-4o` for most AI features (research, writing assist, suggestions, summaries)
+- **Thread Synthesis Model**: Anthropic `claude-sonnet-4-6` via Replit AI Integrations (no separate API key needed)
 - **Whisper**: OpenAI `whisper-1` for audio/video transcription
+- **RAG Pipeline**: Source-First RAG with citations — documents and knowledge links are chunked with source metadata (sourceId, sourceType, sourceTitle, sourcePage, sourceUrl), formatted as `[SOURCE: title, p.N] [ID: DOC-X]` blocks for the AI, and parsed via `parseClaudeCitations()` to produce `<cite />` tags and a `citations[]` array
 - **Knowledge Base Pipeline**: Documents → extracted content stored in DB → injected into AI system prompts as context
 - **Streaming**: SSE (Server-Sent Events) for real-time AI responses in research and writing assistants
 
@@ -70,6 +80,13 @@ Preferred communication style: Simple, everyday language.
 - **Database ORM**: Drizzle ORM with PostgreSQL dialect
 - **Schema Validation**: Zod with drizzle-zod integration for type-safe schemas
 - **Auth**: Email/password with bcrypt hashing, express-session with PostgreSQL session store
+- **RBAC**: Simplified two-tier role model
+  - Profile-level roles: ADMIN (system settings, user management) and PM (default for all users)
+  - Admin-only routes: `/api/users`, `/api/linear`, `/api/admin/settings`
+  - All authenticated users: full CRUD on threads, nodes, edges, documents, knowledge links, research, steward, agenda submissions, knowledge config
+  - No more COLLABORATOR profile role — all content creation is open to any authenticated user
+  - Thread-level access control: thread creator is owner; close/delete restricted to owner (enforced server-side)
+  - Roles stored in `users.role` column, new signups default to PM
 
 ### Data Storage
 - **Database**: PostgreSQL (connection via DATABASE_URL environment variable)
@@ -89,6 +106,10 @@ Preferred communication style: Simple, everyday language.
 │   ├── routes.ts        # API route definitions
 │   ├── storage.ts       # Database access layer
 │   ├── db.ts            # Database connection
+│   ├── linear-client.ts # Linear API client (Replit connector auth)
+│   ├── rag/             # Source-First RAG pipeline
+│   │   ├── retrieval.ts # Chunk retrieval with source metadata
+│   │   └── citations.ts # parseClaudeCitations + citation system prompt
 │   └── steward/         # AI Steward service
 │       └── brain.ts     # AI logic for research, suggestions, ideal threads
 ├── shared/              # Shared code between client/server

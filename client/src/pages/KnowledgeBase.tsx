@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { 
   Upload, 
@@ -21,7 +21,9 @@ import {
   Headphones,
   Video,
   FileType,
-  Eye
+  Eye,
+  Palette,
+  Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +80,16 @@ export default function KnowledgeBase() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [viewDocId, setViewDocId] = useState<number | null>(null);
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false);
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
+  const templateFileRef = useRef<HTMLInputElement>(null);
+  const [templateForm, setTemplateForm] = useState({
+    name: "",
+    documentType: "",
+    description: "",
+    content: "",
+  });
   const queryClient = useQueryClient();
 
   const [docForm, setDocForm] = useState({
@@ -153,6 +165,69 @@ export default function KnowledgeBase() {
       queryClient.invalidateQueries({ queryKey: ['/api/documents'] });
     },
   });
+
+  const { data: apiStyleTemplates = [] } = useQuery<Array<{
+    id: number;
+    name: string;
+    documentType: string;
+    content: string | null;
+    description: string | null;
+    filePath: string | null;
+    fileSize: number | null;
+    mediaType: string | null;
+    createdAt: string;
+  }>>({
+    queryKey: ['/api/style-templates'],
+  });
+
+  const deleteTemplateMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest('DELETE', `/api/style-templates/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/style-templates'] });
+    },
+  });
+
+  const handleTemplateSubmit = async () => {
+    setIsUploadingTemplate(true);
+    try {
+      if (templateFile) {
+        const formData = new FormData();
+        formData.append('file', templateFile);
+        formData.append('name', templateForm.name);
+        formData.append('documentType', templateForm.documentType);
+        formData.append('description', templateForm.description);
+        const res = await fetch('/api/style-templates/upload', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        });
+        if (!res.ok) throw new Error('Upload failed');
+      } else {
+        await apiRequest('POST', '/api/style-templates', {
+          name: templateForm.name,
+          documentType: templateForm.documentType,
+          description: templateForm.description,
+          content: templateForm.content,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/style-templates'] });
+      setShowTemplateDialog(false);
+      setTemplateForm({ name: "", documentType: "", description: "", content: "" });
+      setTemplateFile(null);
+    } catch (err) {
+      console.error('Template upload error:', err);
+    } finally {
+      setIsUploadingTemplate(false);
+    }
+  };
+
+  const STYLE_TEMPLATE_TYPES = [
+    "Memo", "Research Document", "Email", "Ordinance", "Resolution",
+    "Staff Report", "Meeting Minutes", "Permit Review", "Policy Brief",
+    "Decision Document", "Other"
+  ];
 
   const deleteLinkMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -842,9 +917,13 @@ export default function KnowledgeBase() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsList className="grid w-full max-w-lg grid-cols-3">
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
-          <TabsTrigger value="links">Reference Links ({links.length})</TabsTrigger>
+          <TabsTrigger value="links">Links ({links.length})</TabsTrigger>
+          <TabsTrigger value="templates" data-testid="tab-style-templates">
+            <Palette className="w-3 h-3 mr-1" />
+            Style ({apiStyleTemplates.length})
+          </TabsTrigger>
         </TabsList>
 
         {/* Documents Tab */}
@@ -1073,7 +1152,246 @@ export default function KnowledgeBase() {
             ))}
           </div>
         </TabsContent>
+
+        {/* Style Templates Tab */}
+        <TabsContent value="templates" className="space-y-4" data-testid="tab-content-templates">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-[#002244]">Style Templates</h3>
+              <p className="text-xs text-muted-foreground">Upload example documents to teach the AI your municipality's tone, structure, and formatting conventions.</p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setShowTemplateDialog(true)}
+              className="bg-[#B08D57] hover:bg-[#B08D57]/90 text-white"
+              data-testid="button-add-template"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Add Template
+            </Button>
+          </div>
+
+          <div className="grid gap-4">
+            {apiStyleTemplates.length === 0 && (
+              <Card className="p-8 text-center border-dashed border-2 border-[#B08D57]/30">
+                <Palette className="w-10 h-10 text-[#B08D57]/40 mx-auto mb-3" />
+                <p className="text-muted-foreground font-medium">No style templates yet</p>
+                <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+                  Upload example memos, ordinances, emails, or other documents that represent your city's writing style. The AI will match their tone and structure when generating new documents.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4 border-[#B08D57]/40 text-[#B08D57] hover:bg-[#B08D57]/10"
+                  onClick={() => setShowTemplateDialog(true)}
+                  data-testid="button-add-first-template"
+                >
+                  <Upload className="w-4 h-4 mr-1" />
+                  Upload Your First Template
+                </Button>
+              </Card>
+            )}
+            {apiStyleTemplates.map((template, index) => (
+              <motion.div
+                key={template.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05 }}
+              >
+                <Card className="hover:shadow-md transition-all group" data-testid={`card-template-${template.id}`}>
+                  <CardContent className="p-3 md:pt-6">
+                    <div className="flex items-start justify-between gap-2 md:gap-4">
+                      <div className="flex items-start gap-2 md:gap-4 flex-1 min-w-0">
+                        <div className="p-2 md:p-3 rounded-lg bg-[#B08D57]/20 group-hover:bg-[#B08D57]/30 transition-colors flex-shrink-0">
+                          <Palette className="w-4 md:w-5 h-4 md:h-5 text-[#B08D57]" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-sm md:text-base text-foreground truncate">
+                            {template.name}
+                          </h3>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge variant="secondary" className="text-xs bg-[#002244]/10 text-[#002244]">
+                              {template.documentType}
+                            </Badge>
+                            {template.fileSize && (
+                              <span className="text-xs text-muted-foreground">
+                                {(template.fileSize / 1024).toFixed(0)} KB
+                              </span>
+                            )}
+                          </div>
+                          {template.description && (
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{template.description}</p>
+                          )}
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Added {new Date(template.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 h-8 w-8 p-0"
+                            data-testid={`button-delete-template-${template.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Style Template</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Are you sure you want to delete "{template.name}"? The AI will no longer use this document's style as reference.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => deleteTemplateMutation.mutate(template.id)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+          </div>
+        </TabsContent>
       </Tabs>
+
+      {/* Add Style Template Dialog */}
+      <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Palette className="w-5 h-5 text-[#B08D57]" />
+              Add Style Template
+            </DialogTitle>
+            <DialogDescription>
+              Upload an example document that represents your city's writing style. The AI will match its tone and structure when producing new documents of this type.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Template Name</Label>
+              <Input
+                value={templateForm.name}
+                onChange={(e) => setTemplateForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g., City of Denver Standard Memo"
+                data-testid="input-template-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Document Type</Label>
+              <Select
+                value={templateForm.documentType}
+                onValueChange={(val) => setTemplateForm(f => ({ ...f, documentType: val }))}
+              >
+                <SelectTrigger data-testid="select-template-type">
+                  <SelectValue placeholder="Select document type..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {STYLE_TEMPLATE_TYPES.map(t => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Description (optional)</Label>
+              <Input
+                value={templateForm.description}
+                onChange={(e) => setTemplateForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="Brief note about this template's style or context"
+                data-testid="input-template-description"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Upload File or Paste Content</Label>
+              <div
+                className={cn(
+                  "border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors",
+                  templateFile ? "border-[#B08D57] bg-[#B08D57]/5" : "border-muted-foreground/30 hover:border-[#B08D57]/50"
+                )}
+                onClick={() => templateFileRef.current?.click()}
+              >
+                <input
+                  ref={templateFileRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.txt,.md"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setTemplateFile(file);
+                      if (!templateForm.name) {
+                        setTemplateForm(f => ({ ...f, name: file.name.replace(/\.[^.]+$/, '') }));
+                      }
+                    }
+                  }}
+                  data-testid="input-template-file"
+                />
+                {templateFile ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <File className="w-5 h-5 text-[#B08D57]" />
+                    <span className="text-sm font-medium">{templateFile.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={(e) => { e.stopPropagation(); setTemplateFile(null); }}
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div>
+                    <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-1" />
+                    <p className="text-xs text-muted-foreground">Click to upload PDF, Word, or text file</p>
+                  </div>
+                )}
+              </div>
+              {!templateFile && (
+                <Textarea
+                  value={templateForm.content}
+                  onChange={(e) => setTemplateForm(f => ({ ...f, content: e.target.value }))}
+                  placeholder="Or paste the document content directly here..."
+                  className="min-h-[120px] text-sm"
+                  data-testid="textarea-template-content"
+                />
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowTemplateDialog(false)}>Cancel</Button>
+            <Button
+              onClick={handleTemplateSubmit}
+              disabled={!templateForm.name || !templateForm.documentType || (!templateFile && !templateForm.content) || isUploadingTemplate}
+              className="bg-[#B08D57] hover:bg-[#B08D57]/90 text-white"
+              data-testid="button-submit-template"
+            >
+              {isUploadingTemplate ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Add Template
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Info Box */}
       <motion.div

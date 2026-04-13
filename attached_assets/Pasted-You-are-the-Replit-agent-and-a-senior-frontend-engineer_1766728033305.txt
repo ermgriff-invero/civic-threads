@@ -1,0 +1,83 @@
+You are the Replit agent and a senior frontend engineer. Fix and (re)build the landing-page animation for “Civic Threads” so it reliably plays on desktop + mobile.
+
+GOAL
+Create a smooth, modern animation that demonstrates the “Thread Canvas” workflow on the landing page. This is NOT the full app—just a visual demo component.
+
+WHAT THE ANIMATION SHOULD SHOW (the “flow”)
+Animate a thread being built step-by-step:
+1) A blank canvas appears with a thread title at the top.
+2) A first node card fades/slides in: “Policy Concept”
+3) Connectors/lines draw to the next node.
+4) Next node appears: “Research Memo”
+5) Next: “Staff Report”
+6) Next: “Public Input Summary”
+7) Next: “Impact Assessment”
+8) Next: “Implementation Plan”
+9) The canvas subtly pans/zooms to follow the newest node.
+10) End state: all nodes visible, brief “Thread health: 92% complete” badge appears.
+11) Loop the animation with a short pause (1–2s). Use reduced-motion settings.
+
+CONSTRAINTS / REQUIREMENTS
+- Build this as a single React component: `ThreadCanvasAnimation.tsx`
+- Must be self-contained and easy to drop into a landing page.
+- Must not depend on the rest of the app state.
+- Must be resilient: no flaky timing; avoid setInterval drift.
+- Must support `prefers-reduced-motion` (if enabled: show the final state without animation).
+- Must be performant (no heavy re-renders). Use CSS animations and/or requestAnimationFrame carefully.
+- Must look good in a hero section: responsive, max width ~900px, scales down gracefully.
+- Provide controls for debugging: `pause`, `play`, `restart` (can be hidden behind a `debug` prop).
+
+IMPLEMENTATION CHOICE (pick one, but make it solid)
+Option A (preferred): Framer Motion (simple, reliable sequencing)
+- Use motion variants + AnimatePresence
+- Use SVG paths for connector lines and animate stroke-dashoffset to “draw” the lines
+
+Option B: Pure CSS keyframes + staged class toggles
+- Use one timeline with keyframes for nodes/lines
+- Use CSS variables for timing
+- Minimal JS to restart loop
+
+VISUAL DESIGN (match Civic Threads vibe)
+- Clean white background, soft shadows, rounded cards (12–16px)
+- Primary accent: green (use CSS var like `--ct-green: #1F9D55` or similar; don’t hardcode if app has a theme)
+- Cards:
+  - Title (bold)
+  - Subtitle (small, gray)
+  - Small icon dot on the left
+- Connectors: thin gray/green line, animated draw
+- Add subtle floating effect (tiny up/down) after nodes appear
+
+COMPONENT API
+`<ThreadCanvasAnimation loop={true} debug={false} />`
+
+Props:
+- loop?: boolean (default true)
+- debug?: boolean (default false)
+- speed?: number (default 1) multiplier on timing
+
+TECH DETAILS
+- Use an internal “timeline steps” array like:
+  [
+    { id:"concept", title:"Policy Concept", subtitle:"Early-stage proposal", x: 40, y: 40 },
+    { id:"research", title:"Research Memo", subtitle:"Peer city + data scan", x: 280, y: 120 },
+    ...
+  ]
+- Render cards positioned within a relative container.
+- Render connectors as an SVG overlay that draws between card anchor points.
+- Animate:
+  - card: opacity 0 → 1, y +8 → 0
+  - connector: stroke-dashoffset → 0
+  - camera: optional pan/zoom via transform on the inner canvas wrapper
+
+DEBUGGING TASK (the likely reason the current animation “is not working”)
+- Add console logging behind debug prop (animation start/end).
+- Ensure the animation restarts cleanly on loop without memory leaks.
+- Ensure it runs in production builds (no reliance on React StrictMode timing quirks).
+
+DELIVERABLES
+1) Implement `ThreadCanvasAnimation.tsx`
+2) Add a simple landing page section that uses it: `LandingHero.tsx`
+3) Ensure it works with Vite/React and renders correctly.
+4) Include short comments explaining timing and how to add/remove nodes.
+
+Now build it. If anything from the existing code is broken, fix it, but keep changes localized to the landing page animation components.

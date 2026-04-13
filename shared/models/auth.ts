@@ -2,6 +2,9 @@ import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, timestamp, varchar } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
+export const ROLES = ["ADMIN", "PM"] as const;
+export type Role = (typeof ROLES)[number];
+
 // Session storage table for express-session with PostgreSQL store
 export const sessions = pgTable(
   "sessions",
@@ -20,6 +23,7 @@ export const users = pgTable("users", {
   passwordHash: varchar("password_hash").notNull(),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
+  role: varchar("role").notNull().default("PM"),
   title: varchar("title"),
   position: varchar("position"),
   municipality: varchar("municipality"),

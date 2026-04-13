@@ -1,0 +1,59 @@
+You are updating the UI theme for my SaaS app “Civic Threads” (a civic workflow/threading tool). Keep the existing layout and components, but replace the current color system with a green-led civic palette and implement it consistently across the app.
+
+GOAL
+- Primary brand color is green. Remove any saturated “startup blue” and bright orange/red from normal tiles.
+- Use calm grays/silvers for structure, with muted accents (sage, bronze) for node types.
+- Apply colors via design tokens / CSS variables (preferred) so the theme is consistent and maintainable.
+
+PALETTE (HEX)
+Primary / Brand
+- Green Primary: #1F7A5A
+- Green Dark (Decision emphasis): #145A3A
+- Green Soft (background highlight): #E6F3EE
+
+Neutrals
+- Charcoal (primary text/icons): #2F3437
+- Slate (secondary text/metadata): #5F6B73
+- Silver (borders/dividers): #E5E7EB
+- Mist (canvas / app background): #F3F4F6
+
+Accents (node types)
+- Sage (Research / References): #7FAE9D
+- Bronze (Draft / In Progress): #B08D57
+
+Status colors (use sparingly)
+- Warning (muted gold): #C7A64A
+- Error (muted burgundy): #8C2F2F
+
+IMPLEMENTATION REQUIREMENTS
+1) Create theme tokens:
+- Define CSS variables (or a theme object if using Tailwind/theme provider) for:
+  --color-bg, --color-surface, --color-border,
+  --color-text, --color-text-muted,
+  --color-primary, --color-primary-dark, --color-primary-soft,
+  --color-research, --color-draft,
+  --color-warning, --color-error.
+
+2) Apply tokens globally:
+- App background uses Mist (#F3F4F6).
+- Surfaces/cards/nodes use white or a very light neutral with Silver borders.
+- Default text uses Charcoal; secondary text uses Slate.
+
+3) Apply to the thread canvas UI (the node tiles):
+- Decision nodes: green outline/header accents using #1F7A5A and optional emphasis #145A3A.
+- Draft nodes: bronze accents (#B08D57).
+- Research nodes: sage accents (#7FAE9D).
+- Avoid strong fills; prefer subtle tinted headers/left borders or top bars with neutral bodies.
+
+4) Interaction states:
+- Hover: slightly darker border (Silver -> Slate tint) and a soft shadow.
+- Selected: use Green Soft (#E6F3EE) background highlight plus Green Primary border.
+- Focus rings: use Green Primary at low opacity.
+
+5) Accessibility:
+- Maintain readable contrast for text on all surfaces.
+- Do not use warning/error colors for normal categories—only for true warnings/errors.
+
+DELIVERABLE
+- Update the theme and relevant components/styles so the palette is visible across the app immediately (canvas background, node tiles, buttons, tags/badges, text).
+- Keep changes minimal and consistent (no redesign), just apply the new color system cleanly.

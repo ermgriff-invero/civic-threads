@@ -56,7 +56,8 @@ async function loginRequest(credentials: LoginCredentials): Promise<UserWithoutP
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || "Login failed");
+    const msg = [error.message, error.hint, error.detail].filter(Boolean).join(" ");
+    throw new Error(msg || "Login failed");
   }
 
   return response.json();
@@ -72,7 +73,8 @@ async function registerRequest(credentials: RegisterCredentials): Promise<UserWi
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.message || "Registration failed");
+    const msg = [error.message, error.hint, error.detail].filter(Boolean).join(" ");
+    throw new Error(msg || "Registration failed");
   }
 
   return response.json();

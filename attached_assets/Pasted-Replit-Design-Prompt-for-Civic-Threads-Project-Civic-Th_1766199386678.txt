@@ -1,0 +1,53 @@
+Replit Design Prompt for Civic Threads
+Project: Civic Threads (Mobile-First PWA)
+Role: Expert UI/UX Designer & Frontend Architect
+Goal: Build the high-fidelity UI/UX foundation for a government operational intelligence platform.
+1. App Identity & Aesthetic
+Core Concept: "The System of Record for Municipal Decisions." Think "Linear meets Miro" but tailored for high-stakes government work.
+Visual Style: Sleek, modern, and professional. It must feel trustworthy (government) but fluid and fast (modern SaaS).
+Color Palette:
+Primary Brand: Green #22c55e (Use for primary actions, active states, and key data visualization).
+Backgrounds: Clean White #ffffff with subtle light gray #f9fafb for canvas backgrounds.
+Text: Dark Slate #1f2937 for headings, Cool Gray #4b5563 for body.
+Accents: Use subtle gradients of the primary green for the "AI Brain" elements.
+Typography: Inter or San Francisco (clean, sans-serif, highly readable).
+2. Core Navigation & Layout (Mobile-First)
+Structure: A PWA layout with a bottom navigation bar (mobile) / side rail (desktop) containing:
+The Brain: (Home/Dashboard)
+My Threads: (Active Work)
+Search/Recall: (AI Knowledge Base)
+Profile/Settings.
+FAB (Floating Action Button): A prominent, central Green #22c55e button to "Start New Thread."
+3. Key Views to Build
+A. View 1: "The Brain" (Home Dashboard)
+Concept: Instead of a boring list, this is a visual representation of institutional memory.
+UI: A subtle, interactive background network graph (nodes connected by lines) representing saved threads.
+Foreground:
+"Good Morning, [User]."
+"Ask the Brain": A search bar that doesn't just search text but asks, "How did we handle [Topic] last time?"
+Recent Activity: Cards floating over the network showing active threads with status indicators (e.g., "Drafting," "In Review," "Decided").
+B. View 2: The Thread Canvas (The Core Workspace)
+Concept: An infinite, open canvas (like a whiteboard) where a "Thread" lives. It is NOT a chat stream. It is a process flow.
+UI Elements:
+Visual Flow: Users add "Nodes" to the canvas connected by directional lines.
+Node Types:
+Research Node: Citations, PDF uploads, links.
+Draft Node: Memos, Resolutions, Staff Reports.
+Meeting Node: Minutes, agendas.
+Decision Node: The final outcome (Approved/Denied) + Rationale.
+Interactivity: Drag-and-drop nodes. Pinch-to-zoom on mobile.
+Collaboration: User avatars (bubbles) floating in the top right showing who is currently viewing/editing the thread. "Invite" button to add colleagues.
+C. View 3: The Artifact Editor (Drill-down)
+Interaction: Tapping a "Draft Node" on the canvas opens this view.
+UI: A distraction-free rich text editor (like Notion).
+AI Integration: A "Magic" button that uses the "Brain" (past threads) to auto-draft content based on previous similar decisions.
+4. Functional "Wow" Factors (UI Only)
+The "Save to Brain" Animation: When a thread is marked "Closed/Decided," animate the nodes collapsing into a single glowing green orb that flies into the "Brain" network icon. This visually reinforces that the knowledge is being preserved.
+Collaborator Cursors: If possible, show live presence indicators (even if mocked for now) to emphasize the multi-player nature.
+5. Technical Stack Preferences
+React
+Tailwind CSS (for styling)
+Framer Motion (for the sleek, fluid animations of the canvas and nodes)
+Lucide React (for clean iconography)
+Execution Instructions:
+Start by scaffolding the Thread Canvas. This is the most critical differentiator. Build a responsive canvas where I can add a "Research Node" and a "Decision Node" and connect them. Use the #22c55e green for the connections to signify the "Thread."

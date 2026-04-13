@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { CitedMessage } from '@/components/CitedMessage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -60,10 +61,19 @@ interface ThreadContext {
   riskFlags: string[];
 }
 
+interface SourceCitationData {
+  sourceId: string;
+  sourceType: "document" | "url";
+  sourceTitle: string;
+  sourcePage?: number;
+  sourceUrl?: string;
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   sources?: { title: string; snippet: string; url?: string }[];
+  citations?: SourceCitationData[];
   suggestedNextSteps?: string[];
 }
 
@@ -296,12 +306,25 @@ function ResearchTab({ threadId }: { threadId: number }) {
         
         // Load existing messages from the session
         if (data.messages && data.messages.length > 0) {
-          const loadedMessages: ChatMessage[] = data.messages.map((m: any) => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content,
-            sources: m.citations || [],
-            suggestedNextSteps: m.suggestedNextSteps || [],
-          }));
+          const loadedMessages: ChatMessage[] = data.messages.map((m: any) => {
+            const rawCitations = m.citations || [];
+            const sourceCitations: SourceCitationData[] = [];
+            const legacySources: ChatMessage['sources'] = [];
+            for (const c of rawCitations) {
+              if (c.sourceId) {
+                sourceCitations.push(c);
+              } else if (c.title) {
+                legacySources.push(c);
+              }
+            }
+            return {
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+              sources: legacySources,
+              citations: sourceCitations,
+              suggestedNextSteps: m.suggestedNextSteps || [],
+            };
+          });
           setMessages(loadedMessages);
         }
       } catch (err) {
@@ -355,6 +378,7 @@ function ResearchTab({ threadId }: { threadId: number }) {
       const decoder = new TextDecoder();
       let fullContent = '';
       let sources: ChatMessage['sources'] = [];
+      let citations: SourceCitationData[] = [];
       let suggestedNextSteps: string[] = [];
 
       if (reader) {
@@ -369,13 +393,16 @@ function ResearchTab({ threadId }: { threadId: number }) {
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6));
-                if (data.type === 'content') {
+                if (data.content && !data.done) {
                   fullContent += data.content;
                   setStreamingContent(fullContent);
                 } else if (data.type === 'sources') {
                   sources = data.sources;
                 } else if (data.type === 'suggestions') {
                   suggestedNextSteps = data.suggestions;
+                } else if (data.done) {
+                  if (data.fullResponse) fullContent = data.fullResponse;
+                  if (data.citations) citations = data.citations;
                 }
               } catch {
                 fullContent += line.slice(6);
@@ -388,7 +415,7 @@ function ResearchTab({ threadId }: { threadId: number }) {
 
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: fullContent, sources, suggestedNextSteps },
+        { role: 'assistant', content: fullContent, sources, citations, suggestedNextSteps },
       ]);
       setStreamingContent('');
     } catch (err) {
@@ -533,9 +560,13 @@ function ResearchTab({ threadId }: { threadId: number }) {
                 )}
                 data-testid={`message-${msg.role}-${idx}`}
               >
-                <p className="text-sm whitespace-pre-wrap break-words">{msg.role === 'assistant' ? cleanMarkdown(msg.content) : msg.content}</p>
+                {msg.role === 'assistant' && (msg.citations?.length ?? 0) > 0 ? (
+                  <CitedMessage content={cleanMarkdown(msg.content)} citations={msg.citations} />
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap break-words">{msg.role === 'assistant' ? cleanMarkdown(msg.content) : msg.content}</p>
+                )}
 
-                {msg.sources && msg.sources.length > 0 && (
+                {msg.sources && msg.sources.length > 0 && !(msg.citations?.length) && (
                   <div className="mt-3 pt-3 border-t border-border/50">
                     <p className="text-xs font-semibold mb-2 flex items-center gap-1">
                       <BookOpen className="w-3 h-3" /> Sources

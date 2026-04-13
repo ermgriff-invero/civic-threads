@@ -1,3 +1,4 @@
+import "./env";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -85,6 +86,16 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      log(
+        `Port ${port} is already in use. Stop the other process (e.g. another dev server) or set PORT=5001. On macOS, AirPlay Receiver sometimes uses 5000.`,
+        "express",
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
   httpServer.listen(
     {
       port,

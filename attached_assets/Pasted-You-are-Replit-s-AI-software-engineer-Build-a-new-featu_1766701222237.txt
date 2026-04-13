@@ -1,0 +1,157 @@
+You are Replit’s AI software engineer. Build a new feature for my web app called “Civic Threads”:
+
+GOAL
+Embed an “AI Thread Steward” into the existing Thread Canvas WITHOUT changing the core canvas layout/behavior. The steward should:
+1) Provide a chat-based research experience (user asks questions; AI returns researched answers with citations).
+2) After research (or anytime), propose next-step suggestions to improve thread quality (not auto-do).
+3) Let the user choose from suggested actions via explicit UI selections (buttons/menus). AI executes ONLY after user approval.
+4) Offer a one-click option to “Build an Ideal Thread” (a recommended structure + artifacts), but user can modify/reorder/remove anything.
+
+IMPORTANT CONSTRAINTS
+- Do NOT auto-invite users, auto-publish, auto-advance stages, or auto-create artifacts without explicit approval.
+- Keep the Thread Canvas the same. Add the steward as a right-side panel / drawer. If the screen is narrow, make it a collapsible bottom sheet.
+- Every AI-created artifact must be editable and fully reversible.
+- Every research response must show sources/citations (URLs or doc titles + snippet references). If you can’t actually browse the web, implement citation placeholders and a “Sources” section from provided links or stored documents.
+
+TECH STACK (choose sensible defaults if not already present)
+- Frontend: React + TypeScript (Vite)
+- UI: Tailwind (or a minimal component library)
+- Backend: Node + Express (or Next.js API routes if you prefer a single project)
+- Data: SQLite via Prisma (or Postgres if already configured)
+- Auth: stub/mock ok (implement simple user id in session/localStorage if no auth exists)
+- LLM: create an abstraction layer that supports OpenAI-compatible chat completions (API key via env). Use streaming if feasible.
+- NO background/cron tasks required.
+
+CORE DATA MODEL
+Implement (or extend) these entities:
+
+1) Thread
+- id, title, type (Ordinance/Report/Resolution/Amendment + future), stage (enum), createdAt, updatedAt
+
+2) ThreadNode (an item on the thread canvas)
+- id, threadId
+- kind (enum): Research, Memo, StaffReport, ImplementationPlan, PublicInputSummary, ImpactAssessment, DecisionLog, MeetingBrief, Custom
+- title
+- content (rich text or markdown)
+- status: Draft | Proposed | Final
+- position (number) for ordering
+- createdBy: user | ai
+- aiMeta (json): { model, promptSummary, confidence, citations[] }
+
+3) StewardSuggestion
+- id, threadId
+- type (enum): CREATE_NODE, REVISE_NODE, ADD_COLLABORATOR_SUGGESTION, REQUEST_REVIEW, FLAG_RISK, NEXT_STEP
+- title
+- rationale (why this helps)
+- actionPayload (json) describing what will happen if accepted
+- priority (1-5)
+- createdAt
+- status: NEW | ACCEPTED | DISMISSED
+
+4) ResearchSession + ResearchMessage
+- ResearchSession: id, threadId, createdAt
+- ResearchMessage: id, sessionId, role (user|assistant), content, citations[] (array), createdAt
+
+RIGHT PANEL UX (“AI Thread Steward”)
+Add a panel with 3 tabs:
+
+TAB 1: Research
+- Chat interface scoped to the thread
+- User can ask questions
+- Assistant responds with:
+  - Answer
+  - “Sources” section (citations list)
+  - Optional “Suggested Next Steps” chips (but NOT auto-create)
+- A button: “Generate Suggestions” (creates StewardSuggestion items)
+
+TAB 2: Suggestions
+- List suggestions (priority sorted)
+- Each card shows: title, rationale, what it will create/change
+- Buttons: “Preview” / “Accept” / “Dismiss”
+- Accept triggers an execution step that creates/updates ThreadNodes ONLY after confirmation
+- Preview opens a modal showing a draft artifact the AI would create; user can edit before “Create”
+
+TAB 3: Ideal Thread
+- Button: “Build Ideal Thread for this Type”
+- AI proposes a recommended sequence of ThreadNodes given thread.type + stage + existing nodes
+- Show as a draggable preview list with toggles to include/exclude each item
+- User clicks “Create Selected” to add those nodes (status=Proposed)
+- User can rearrange after creation in the canvas (respect existing reorder behavior)
+
+THREAD HEALTH (lightweight)
+In the Steward panel header, show a “Thread Health” summary:
+- Completeness: % (based on required artifacts for the selected thread.type)
+- Missing items list (e.g., “Staff report missing”, “Implementation plan missing”)
+- Risk flags (if any suggestions of type FLAG_RISK exist)
+Implement a simple rules engine:
+- For Ordinance: recommended kinds = Research, StaffReport, PublicInputSummary, ImpactAssessment, ImplementationPlan, DecisionLog
+- For Resolution: Research, StaffReport, DecisionLog
+- For Report: Research, Memo/StaffReport, ImpactAssessment
+- For Amendment: Research, StaffReport, DecisionLog, ImpactAssessment
+Allow easy extension later.
+
+LLM PROMPTING (must implement as code)
+Create a “StewardBrain” service with 3 functions:
+
+1) answerResearchQuestion(threadContext, question) -> { answer, citations[], suggestedNextSteps[] }
+- threadContext includes thread type, stage, existing nodes titles/kinds, and any known sources
+- citations: if web browsing is not available, use “Provided Sources” or return placeholders with “Needs verification”.
+
+2) generateSuggestions(threadContext) -> StewardSuggestion[]
+- must be conservative, process-aware, and non-annoying (max 5 suggestions at a time)
+- suggestions should be “earned” by missing artifacts/gaps
+
+3) buildIdealThreadPlan(threadContext) -> { plan: Array<{kind,title,why,defaultIncluded,initialContentOutline}> }
+- creates an ideal sequence and outlines for each artifact
+
+EXECUTION SAFETY
+Every time user clicks “Accept” or “Create Selected”, do:
+- Show a confirmation dialog summarizing changes
+- Generate draft content with the LLM
+- Present the draft in an editor for user to adjust
+- Only then persist as ThreadNode(s)
+
+API ENDPOINTS
+Implement minimal endpoints:
+
+GET /api/threads/:id/context
+- returns thread + nodes + suggestions + health
+
+POST /api/research/:threadId/message
+- { content }
+- returns assistant message { content, citations, suggestedNextSteps }
+
+POST /api/steward/:threadId/suggestions/generate
+- returns suggestions array
+
+POST /api/steward/:threadId/ideal-thread/plan
+- returns ideal thread plan
+
+POST /api/steward/:threadId/execute
+- accepts actionPayload from a suggestion OR “create nodes from ideal plan”
+- returns created/updated nodes
+
+PATCH /api/nodes/:id
+- update content/title/status/position
+
+DATABASE MIGRATIONS
+Add Prisma schema (or equivalent) and migrations.
+
+FRONTEND INTEGRATION
+- Add the Steward panel component to the Thread page.
+- Do NOT refactor or redesign the existing canvas.
+- Ensure changes are isolated: new folder /components/steward, /server/steward, etc.
+
+ERROR HANDLING
+- If LLM key missing: show “AI not configured” with instructions to set env var.
+- If LLM fails: show retry and allow manual editing.
+
+DELIVERABLES
+1) Working implementation with mock data if no existing threads.
+2) Clean, readable code with comments.
+3) A short README section: how to set OPENAI_API_KEY (or compatible) and run the app.
+
+QUALITY BAR
+This should feel like a real product feature: fast, minimal, safe, and reversible. The AI suggests; the user decides.
+
+Now implement it.

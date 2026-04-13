@@ -2,6 +2,8 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
 import { useRoute } from 'wouter';
+import { useAuth } from '@/hooks/use-auth';
+import DocumentRenderer from '@/components/DocumentRenderer';
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -36,11 +38,16 @@ import {
   FileDown,
   Clock,
   Wand2,
-  Loader2
+  Loader2,
+  ClipboardList,
+  Settings,
+  Lock,
+  Archive
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import StewardPanel from "@/components/steward/StewardPanel";
+import SendToAgendaModal from "@/components/SendToAgendaModal";
 import { toast } from "sonner";
 
 type ActionType = 'research' | 'draft' | 'decision' | 'permitReview' | 'meeting';
@@ -88,11 +95,30 @@ const actionLabels: Record<ActionType, string> = {
   permitReview: "Permit Review",
 };
 
+async function parseAiHttpError(response: Response): Promise<string> {
+  const ct = response.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    try {
+      const j = await response.json();
+      if (typeof j?.error === "string") return j.error;
+    } catch {
+      /* ignore */
+    }
+  }
+  return `Request failed (${response.status}).`;
+}
+
+function assistantErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return "Something went wrong. Check the dev server terminal for details.";
+}
+
 export default function ThreadCanvas() {
   const [, params] = useRoute('/thread/:id');
   const threadId = params?.id ? parseInt(params.id) : null;
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
   
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const selectedNodeIdRef = useRef<string | null>(null);
@@ -101,6 +127,7 @@ export default function ThreadCanvas() {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [stewardOpen, setStewardOpen] = useState(false);
+  const [agendaOpen, setAgendaOpen] = useState(false);
   const [isAddingNode, setIsAddingNode] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -111,9 +138,32 @@ export default function ThreadCanvas() {
   const [isWritingAiLoading, setIsWritingAiLoading] = useState(false);
   const [writingStreamingResponse, setWritingStreamingResponse] = useState("");
 
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+
   const { data: thread } = useQuery<ThreadData>({
     queryKey: ['/api/threads', threadId],
     enabled: !!threadId,
+  });
+
+  const isClosed = thread?.status === "Closed";
+  const canWrite = !isClosed;
+
+  const closeThreadMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', `/api/threads/${threadId}/close`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/threads', threadId] });
+      queryClient.invalidateQueries({ queryKey: ['/api/threads'] });
+      setShowCloseConfirm(false);
+      if (data.archived) {
+        toast.success("Thread closed and archived", { description: "Content has been added to the Knowledge Center." });
+      } else {
+        toast.success("Thread closed", { description: "No content to archive." });
+      }
+    },
+    onError: (err: Error) => toast.error("Failed to close thread", { description: err.message }),
   });
 
   const { data: apiNodes = [], refetch: refetchNodes } = useQuery<ThreadNodeData[]>({
@@ -196,6 +246,7 @@ export default function ThreadCanvas() {
   };
 
   const handleSaveContent = () => {
+    if (!canWrite) return;
     if (selectedNode) {
       setIsSaving(true);
       updateNodeMutation.mutate({
@@ -215,13 +266,13 @@ export default function ThreadCanvas() {
   };
 
   const addNode = (type: string, label: string) => {
-    if (isAddingNode) return;
+    if (!canWrite || isAddingNode) return;
     setIsAddingNode(true);
     createNodeMutation.mutate({ type, label });
   };
 
   const sendAiMessage = async () => {
-    if (!chatInput.trim() || isAiLoading || !selectedNode) return;
+    if (!canWrite || !chatInput.trim() || isAiLoading || !selectedNode) return;
     
     const nodeIdAtStart = selectedNode.id;
     const nodeDataAtStart = selectedNode.data;
@@ -245,7 +296,9 @@ export default function ThreadCanvas() {
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to get AI response');
+      if (!response.ok) {
+        throw new Error(await parseAiHttpError(response));
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -263,6 +316,9 @@ export default function ThreadCanvas() {
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6));
+                if (data.error) {
+                  throw new Error(typeof data.error === "string" ? data.error : "AI request failed");
+                }
                 if (data.content) {
                   fullResponse += data.content;
                   if (selectedNodeIdRef.current === nodeIdAtStart) {
@@ -295,7 +351,7 @@ export default function ThreadCanvas() {
         }
       }
     } catch (error) {
-      const errorMessage = { role: 'assistant' as const, content: 'Sorry, I encountered an error. Please try again.' };
+      const errorMessage = { role: 'assistant' as const, content: assistantErrorMessage(error) };
       const finalMessages = [...updatedMessages, errorMessage];
       
       if (selectedNodeIdRef.current === nodeIdAtStart) {
@@ -319,7 +375,7 @@ export default function ThreadCanvas() {
   };
 
   const sendWritingMessage = async () => {
-    if (!writingChatInput.trim() || isWritingAiLoading || !selectedNode) return;
+    if (!canWrite || !writingChatInput.trim() || isWritingAiLoading || !selectedNode) return;
     
     const nodeIdAtStart = selectedNode.id;
     const nodeDataAtStart = selectedNode.data;
@@ -345,7 +401,9 @@ export default function ThreadCanvas() {
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to get AI response');
+      if (!response.ok) {
+        throw new Error(await parseAiHttpError(response));
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -363,6 +421,9 @@ export default function ThreadCanvas() {
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6));
+                if (data.error) {
+                  throw new Error(typeof data.error === "string" ? data.error : "AI request failed");
+                }
                 if (data.content) {
                   fullResponse += data.content;
                   if (selectedNodeIdRef.current === nodeIdAtStart) {
@@ -396,12 +457,23 @@ export default function ThreadCanvas() {
         }
       }
     } catch (error) {
-      const errorMessage = { role: 'assistant' as const, content: 'Sorry, I encountered an error. Please try again.' };
+      const errorMessage = { role: 'assistant' as const, content: assistantErrorMessage(error) };
       const finalMessages = [...updatedMessages, errorMessage];
       
       if (selectedNodeIdRef.current === nodeIdAtStart) {
         setWritingChatMessages(finalMessages);
       }
+
+      updateNodeMutation.mutate({
+        id: nodeIdAtStart,
+        updates: {
+          data: {
+            ...nodeDataAtStart,
+            writingChatMessages: finalMessages,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      });
     } finally {
       setIsWritingAiLoading(false);
       setWritingStreamingResponse("");
@@ -409,6 +481,7 @@ export default function ThreadCanvas() {
   };
 
   const applyAiSuggestion = (suggestion: string) => {
+    if (!canWrite) return;
     setEditedContent(prev => {
       const separator = prev && !prev.endsWith('\n\n') ? '\n\n' : '';
       return prev + separator + suggestion;
@@ -478,7 +551,11 @@ export default function ThreadCanvas() {
           <div className="min-w-0">
             <h2 className="font-semibold text-sm md:text-base flex items-center gap-2 text-[#002244]">
               {thread?.title || 'Loading...'}
-              <Badge variant="outline" className="text-xs bg-[#002244]/10 text-[#002244] border-[#002244]/30">
+              <Badge variant="outline" className={cn(
+                "text-xs",
+                isClosed ? "bg-red-50 text-red-700 border-red-200" : "bg-[#002244]/10 text-[#002244] border-[#002244]/30"
+              )}>
+                {isClosed && <Lock className="w-3 h-3 mr-1" />}
                 {thread?.status || 'Drafting'}
               </Badge>
             </h2>
@@ -494,12 +571,12 @@ export default function ThreadCanvas() {
             <div className="w-7 h-7 rounded-full border-2 border-background flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: '#B08D57' }}>AS</div>
           </div>
           <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="hidden md:flex">
-                <Share2 className="w-4 h-4 mr-2" />
-                Invite
-              </Button>
-            </DialogTrigger>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="hidden md:flex" data-testid="button-invite">
+                  <Share2 className="w-4 h-4 mr-2" />
+                  Invite
+                </Button>
+              </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>Invite Collaborators</DialogTitle>
@@ -528,6 +605,39 @@ export default function ThreadCanvas() {
               </div>
             </DialogContent>
           </Dialog>
+          <Link href={`/thread/${threadId}/settings`}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-[#002244]"
+              data-testid="button-project-settings"
+            >
+              <Settings className="w-4 h-4 md:mr-1" />
+              <span className="hidden lg:inline text-xs">Settings</span>
+            </Button>
+          </Link>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAgendaOpen(true)}
+            className="border-[#002244]/30 text-[#002244] hover:bg-[#002244]/10"
+            data-testid="button-send-to-agenda"
+          >
+            <ClipboardList className="w-4 h-4 md:mr-2" />
+            <span className="hidden md:inline">Send to Agenda</span>
+          </Button>
+          {!isClosed && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCloseConfirm(true)}
+              className="border-red-300 text-red-600 hover:bg-red-50"
+              data-testid="button-close-thread"
+            >
+              <Lock className="w-4 h-4 md:mr-2" />
+              <span className="hidden md:inline">Close</span>
+            </Button>
+          )}
           <Button 
             size="sm" 
             onClick={() => setStewardOpen(true)}
@@ -539,6 +649,51 @@ export default function ThreadCanvas() {
           </Button>
         </div>
       </div>
+
+      {/* Close Thread Confirmation Dialog */}
+      <AlertDialog open={showCloseConfirm} onOpenChange={setShowCloseConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-[#002244]">
+              <Lock className="w-5 h-5" />
+              Close Thread
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">Closing this thread will:</span>
+              <span className="block flex items-center gap-2">
+                <Archive className="w-4 h-4 text-[#B08D57]" />
+                Archive all content to the Knowledge Center
+              </span>
+              <span className="block flex items-center gap-2">
+                <Lock className="w-4 h-4 text-red-500" />
+                Prevent any new sections from being added
+              </span>
+              <span className="block text-sm mt-2">Existing content will remain viewable but cannot be modified. This action cannot be undone.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-close">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => closeThreadMutation.mutate()}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={closeThreadMutation.isPending}
+              data-testid="button-confirm-close"
+            >
+              {closeThreadMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Lock className="w-4 h-4 mr-2" />}
+              Close Thread
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Closed Thread Banner */}
+      {isClosed && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center gap-2 text-sm text-red-700" data-testid="banner-thread-closed">
+          <Lock className="w-4 h-4" />
+          <span className="font-medium">This thread is closed.</span>
+          <span className="text-red-600/70">Content is read-only and has been archived to the Knowledge Center.</span>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden relative">
@@ -554,7 +709,8 @@ export default function ThreadCanvas() {
               <span className="text-xs text-muted-foreground">{activeNodes.length} items</span>
             </div>
             
-            {/* Add Action Buttons */}
+            {/* Add Action Buttons (PM + Admin only) */}
+            {canWrite && (
             <div className="flex flex-wrap gap-1">
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -632,6 +788,7 @@ export default function ThreadCanvas() {
                 <TooltipContent>Coming soon - Permit review feature</TooltipContent>
               </Tooltip>
             </div>
+            )}
           </div>
 
           <ScrollArea className="flex-1">
@@ -640,7 +797,7 @@ export default function ThreadCanvas() {
                 <div className="py-8 text-center text-muted-foreground">
                   <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">No actions yet</p>
-                  <p className="text-xs mt-1">Add your first action above</p>
+                  <p className="text-xs mt-1">{canWrite ? "Add your first action above" : "No actions to view"}</p>
                 </div>
               ) : (
                 activeNodes.map((node) => (
@@ -662,15 +819,17 @@ export default function ThreadCanvas() {
                         {node.data?.content && " · Has content"}
                       </div>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteNodeId(node.id);
-                      }}
-                      className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10"
-                    >
-                      <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
-                    </button>
+                    {canWrite && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteNodeId(node.id);
+                        }}
+                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10"
+                      >
+                        <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+                      </button>
+                    )}
                   </button>
                 ))
               )}
@@ -713,48 +872,48 @@ export default function ThreadCanvas() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {selectedNode.type !== 'research' && editedContent.trim() && (
-                    <>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => handleExportDocument('word')}
-                            data-testid="button-export-word"
-                          >
-                            <FileDown className="w-4 h-4" />
-                            <span className="hidden md:inline ml-2">Word</span>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Export as Word document</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => handleExportDocument('pdf')}
-                            data-testid="button-export-pdf"
-                          >
-                            <Download className="w-4 h-4" />
-                            <span className="hidden md:inline ml-2">PDF</span>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Export as PDF</TooltipContent>
-                      </Tooltip>
-                    </>
-                  )}
-                  <Button 
-                    onClick={handleSaveContent}
-                    disabled={isSaving || updateNodeMutation.isPending}
-                    size="sm"
-                    className="bg-primary"
-                    data-testid="button-save-content"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    {isSaving ? "Saving..." : "Save"}
-                  </Button>
+                    {selectedNode.type !== 'research' && editedContent.trim() && (
+                      <>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => handleExportDocument('word')}
+                              data-testid="button-export-word"
+                            >
+                              <FileDown className="w-4 h-4" />
+                              <span className="hidden md:inline ml-2">Word</span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Export as Word document</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => handleExportDocument('pdf')}
+                              data-testid="button-export-pdf"
+                            >
+                              <Download className="w-4 h-4" />
+                              <span className="hidden md:inline ml-2">PDF</span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Export as PDF</TooltipContent>
+                        </Tooltip>
+                      </>
+                    )}
+                    <Button 
+                      onClick={handleSaveContent}
+                      disabled={isSaving || updateNodeMutation.isPending}
+                      size="sm"
+                      className="bg-primary"
+                      data-testid="button-save-content"
+                    >
+                      <Save className="w-4 h-4 mr-2" />
+                      {isSaving ? "Saving..." : "Save"}
+                    </Button>
                   <Button 
                     variant="ghost" 
                     size="sm"
@@ -863,7 +1022,7 @@ export default function ThreadCanvas() {
                         )}
                       </div>
 
-                      {/* Chat Input */}
+                      {canWrite && (
                       <div className="flex gap-2 pt-4 border-t">
                         <Input
                           value={chatInput}
@@ -876,21 +1035,19 @@ export default function ThreadCanvas() {
                           <Send className="w-4 h-4" />
                         </Button>
                       </div>
+                      )}
                     </div>
                   ) : (
                     <div className="flex flex-col h-full">
-                      {/* Content Editor */}
+                      {/* Content Editor / Document Preview */}
                       <div className="flex-1 min-h-0">
-                        <Label className="flex items-center gap-2 mb-3 text-base font-medium">
-                          <Edit3 className="w-4 h-4" />
-                          Content
-                        </Label>
-                        <Textarea
-                          value={editedContent}
-                          onChange={(e) => setEditedContent(e.target.value)}
-                          placeholder="Enter your content here, or use the AI assistant below to help you develop this document..."
-                          className="min-h-[200px] text-base leading-relaxed resize-y"
-                          data-testid="textarea-content"
+                        <DocumentRenderer
+                          content={editedContent}
+                          onChange={(val) => canWrite && setEditedContent(val)}
+                          readOnly={!canWrite}
+                          nodeType={selectedNode.type}
+                          nodeLabel={selectedNode.label}
+                          threadTitle={thread?.title}
                         />
                       </div>
 
@@ -975,6 +1132,7 @@ export default function ThreadCanvas() {
                                 {msg.role === 'assistant' ? (
                                   <div>
                                     <p className="whitespace-pre-wrap">{msg.content}</p>
+                                    {canWrite && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -984,6 +1142,7 @@ export default function ThreadCanvas() {
                                       <Plus className="w-3 h-3 mr-1" />
                                       Add to document
                                     </Button>
+                                    )}
                                   </div>
                                 ) : (
                                   <p className="whitespace-pre-wrap">{msg.content}</p>
@@ -1005,7 +1164,7 @@ export default function ThreadCanvas() {
                           )}
                         </div>
 
-                        {/* Chat Input */}
+                        {canWrite && (
                         <div className="flex gap-2 pt-2 border-t">
                           <Input
                             value={writingChatInput}
@@ -1024,6 +1183,7 @@ export default function ThreadCanvas() {
                             <Send className="w-4 h-4" />
                           </Button>
                         </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1074,6 +1234,13 @@ export default function ThreadCanvas() {
           type: thread?.type || '',
           status: thread?.status || 'Drafting'
         }}
+      />
+
+      <SendToAgendaModal
+        open={agendaOpen}
+        onOpenChange={setAgendaOpen}
+        threadId={threadId || 0}
+        documentTitle={thread?.title || ''}
       />
     </div>
   );

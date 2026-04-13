@@ -1,0 +1,89 @@
+1. Pre-Legislative / Exploration (high leverage)
+
+These capture thinking before an ordinance or resolution exists — huge for institutional memory.
+
+🧭 Policy Concept
+
+Early-stage idea or proposal under consideration
+Use when: “We’re exploring X, no formal language yet”
+Why it matters: Prevents ideas from living only in email + memory
+
+🔍 Research Memo
+
+Background research, peer city analysis, data review
+Use when: Staff is gathering evidence
+Differentiator: Enables anonymized benchmarking later
+
+💬 Public Input Summary
+
+Community feedback, surveys, hearings, workshops
+Use when: Translating raw public sentiment into policy signal
+Huge trust & transparency win
+
+2. Legislative / Formal Actions (you already have most)
+
+You already cover these well, but one addition is important:
+
+🧾 Staff Report ⭐️
+
+Official recommendation from staff to council/board
+Why it’s critical:
+
+This is often the real decision document
+
+Where rationale, risks, and tradeoffs live
+
+Cities rely on these constantly
+
+If you add only one new option, make it this.
+
+3. Execution & Operations (massively underserved)
+
+Most civic tools stop at passage. Cities don’t.
+
+⚙️ Implementation Plan
+
+How an adopted policy will actually be executed
+Use when: Assigning owners, timelines, departments
+This is where policy succeeds or dies
+
+📊 Impact Assessment
+
+Fiscal, equity, environmental, or operational impacts
+Use when: Evaluating second-order effects
+Sets you up perfectly for outcome learning
+
+📈 Performance Review
+
+Post-implementation results vs expectations
+Use when: “Did this actually work?”
+This unlocks long-term outcome intelligence
+
+4. Legal & Compliance (often overlooked)
+⚖️ Legal Opinion
+
+Counsel interpretation, risk assessment, or compliance view
+Use when: There’s ambiguity or legal exposure
+Keeps legal reasoning attached to decisions
+
+📌 Administrative Rule / Policy
+
+Internal policy or rule not passed by council
+Common in: Zoning, permitting, HR, enforcement
+Often invisible but hugely impactful
+
+5. Meta / Process (power-user features)
+
+These make Civic Threads feel intelligent, not just archival.
+
+🧵 Decision Log
+
+Record of key decisions, alternatives considered, and why
+Use when: Capturing rationale across meetings
+Prevents “why did we do this?” 3 years later
+
+🗓 Meeting Brief
+
+Agenda context, summaries, pre-reads
+Use when: Preparing electeds or staff
+Lightweight, high-frequency document

@@ -1,10 +1,6 @@
-import OpenAI from "openai";
 import { storage } from "./storage";
 import type { Thread, Document } from "@shared/schema";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import { getOpenAI } from "./openai-client";
 
 export interface SummaryAction {
   type: "view_thread" | "start_thread";
@@ -142,7 +138,7 @@ export async function* streamSummaryResponse(
       { role: 'user', content: userMessage }
     ];
 
-    const stream = await openai.chat.completions.create({
+    const stream = await getOpenAI().chat.completions.create({
       model: 'gpt-4o',
       messages,
       stream: true,

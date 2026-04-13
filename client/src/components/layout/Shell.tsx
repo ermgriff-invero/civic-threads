@@ -11,7 +11,9 @@ import {
   Library,
   LogOut,
   ClipboardCheck,
-  Inbox
+  Inbox,
+  Users,
+  Cloud,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -39,13 +41,20 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     return 'User';
   };
 
+  const isAdmin = user?.role === "ADMIN";
+
   const navItems = [
     { icon: Network, label: "Dashboard", href: "/dashboard" },
     { icon: GitBranch, label: "Threads", href: "/threads" },
     { icon: Library, label: "Knowledge", href: "/knowledge-base" },
+    { icon: Cloud, label: "Knowledge 2.0", href: "/knowledge-base-2" },
     { icon: ClipboardCheck, label: "Permitting", href: "#", comingSoon: true },
-    { icon: Inbox, label: "Agenda Dropbox", href: "#", comingSoon: true },
+    { icon: Inbox, label: "Agenda Dropbox", href: "/agenda" },
     { icon: Search, label: "Recall", href: "/search" },
+    ...(isAdmin ? [
+      { icon: Users, label: "Manage Users", href: "/admin/users" },
+      { icon: Settings, label: "Settings", href: "/admin/settings" },
+    ] : []),
     { icon: User, label: "Profile", href: "/profile" },
   ];
 
@@ -211,17 +220,18 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       </nav>
 
       {/* FAB - Global New Thread Button */}
-      <div className="fixed bottom-20 md:bottom-8 right-4 md:right-8 z-50">
-        <Link href="/thread/new">
-          <Button 
-            size="lg" 
-            className="rounded-full h-14 w-14 md:h-auto md:w-auto md:px-6 shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all hover:scale-105 bg-primary text-primary-foreground"
-          >
-            <Plus className="w-6 h-6 md:mr-2" />
-            <span className="hidden md:inline font-semibold">Start New Thread</span>
-          </Button>
-        </Link>
-      </div>
+        <div className="fixed bottom-20 md:bottom-8 right-4 md:right-8 z-50">
+          <Link href="/thread/new">
+            <Button 
+              size="lg" 
+              className="rounded-full h-14 w-14 md:h-auto md:w-auto md:px-6 shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all hover:scale-105 bg-primary text-primary-foreground"
+              data-testid="button-start-new-thread"
+            >
+              <Plus className="w-6 h-6 md:mr-2" />
+              <span className="hidden md:inline font-semibold">Start New Thread</span>
+            </Button>
+          </Link>
+        </div>
     </div>
   );
 }

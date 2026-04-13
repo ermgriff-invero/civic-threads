@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { FileText, CheckCircle2, Trash2, Clock, Plus, Sparkles, MessageCircle, User, Bot, Calendar, Gavel, ClipboardCheck, ChevronRight, Edit3, ExternalLink, Link2, FileStack, X, Check, BookOpen } from "lucide-react";
+import { FileText, CheckCircle2, Trash2, Clock, Plus, Sparkles, MessageCircle, User, Bot, Calendar, Gavel, ClipboardCheck, ChevronRight, Edit3, ExternalLink, Link2, FileStack, X, Check, BookOpen, Eye, Merge, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { useThreads } from "@/hooks/useThreads";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
 import type { ResearchSession, ResearchMessage, ThreadNode } from "@shared/schema";
 import {
   AlertDialog,
@@ -26,6 +27,21 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+} from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type ActionType = 'research' | 'draft' | 'meeting' | 'decision' | 'permitReview';
 
@@ -60,6 +76,8 @@ export default function MyThreads() {
   const { threads, deleteThread } = useThreads();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const canWrite = user?.role === "ADMIN" || user?.role === "PM";
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleteTitle, setDeleteTitle] = useState<string>("");
   const [selectedAction, setSelectedAction] = useState<ActionItem | null>(null);
@@ -70,7 +88,53 @@ export default function MyThreads() {
   const [selectedForCombine, setSelectedForCombine] = useState<Set<string>>(new Set());
   const [combineMode, setCombineMode] = useState(false);
   const [expandedThreads, setExpandedThreads] = useState<Set<number>>(new Set());
-  
+  const [synthesizeOpen, setSynthesizeOpen] = useState(false);
+  const [synthesizeSelected, setSynthesizeSelected] = useState<Set<number>>(new Set());
+  const [synthesizeTitle, setSynthesizeTitle] = useState("");
+  const [synthesizeFormat, setSynthesizeFormat] = useState<string>("");
+
+  const synthesizeMutation = useMutation({
+    mutationFn: async (data: { threadIds: number[]; outputTitle: string; outputFormat: string }) => {
+      const res = await apiRequest("POST", "/api/threads/merge", data);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/threads"] });
+      toast.success("Threads synthesized", {
+        description: `"${data.title}" has been created from ${data.sourceThreads.length} threads.`,
+      });
+      setSynthesizeOpen(false);
+      setSynthesizeSelected(new Set());
+      setSynthesizeTitle("");
+      setSynthesizeFormat("");
+      navigate(`/thread/${data.id}`);
+    },
+    onError: (error: Error) => {
+      toast.error("Synthesis failed", { description: error.message });
+    },
+  });
+
+  const handleSynthesize = () => {
+    if (synthesizeSelected.size < 2 || !synthesizeTitle.trim() || !synthesizeFormat) return;
+    synthesizeMutation.mutate({
+      threadIds: Array.from(synthesizeSelected),
+      outputTitle: synthesizeTitle.trim(),
+      outputFormat: synthesizeFormat,
+    });
+  };
+
+  const toggleSynthesizeThread = (threadId: number) => {
+    setSynthesizeSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  };
+
   const activeThreads = threads.filter(t => t.status !== "Decided");
   const decidedThreads = threads.filter(t => t.status === "Decided");
   const allThreadsSorted = [...activeThreads, ...decidedThreads];
@@ -334,14 +398,37 @@ export default function MyThreads() {
         <div className="p-4 border-b bg-background">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-xl font-bold tracking-tight">My Threads</h1>
-            <Link href="/thread/new">
-              <Button size="sm" className="bg-primary text-primary-foreground" data-testid="button-new-thread">
-                <Plus className="w-4 h-4" />
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2">
+              {!canWrite && (
+                <Badge variant="secondary" className="text-xs" data-testid="badge-read-only">
+                  <Eye className="w-3 h-3 mr-1" />
+                  Read Only
+                </Badge>
+              )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSynthesizeOpen(true);
+                    setSynthesizeSelected(new Set());
+                    setSynthesizeTitle("");
+                    setSynthesizeFormat("");
+                  }}
+                  data-testid="button-merge-threads"
+                >
+                  <Merge className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">Merge</span>
+                </Button>
+                <Link href="/thread/new">
+                  <Button size="sm" className="bg-primary text-primary-foreground" data-testid="button-new-thread">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </Link>
+            </div>
           </div>
           
           <div className="flex gap-2">
+            {canWrite && (
             <Button 
               variant={combineMode ? "default" : "outline"} 
               size="sm" 
@@ -355,6 +442,7 @@ export default function MyThreads() {
               <Link2 className="w-3 h-3 mr-1" />
               {combineMode ? "Cancel" : "Link Actions"}
             </Button>
+            )}
             {combineMode && selectedForCombine.size >= 2 && (
               <Button 
                 size="sm" 
@@ -407,13 +495,15 @@ export default function MyThreads() {
                         >
                           <ExternalLink className="w-4 h-4 text-muted-foreground hover:text-[#002244]" />
                         </button>
-                        <button
-                          onClick={(e) => handleDeleteClick(e, thread.id, thread.title)}
-                          className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
-                          data-testid={`delete-thread-${thread.id}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
-                        </button>
+                        {canWrite && (
+                          <button
+                            onClick={(e) => handleDeleteClick(e, thread.id, thread.title)}
+                            className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
+                            data-testid={`delete-thread-${thread.id}`}
+                          >
+                            <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                          </button>
+                        )}
                       </div>
                       
                       {isExpanded && actions.length > 0 && (
@@ -483,13 +573,15 @@ export default function MyThreads() {
                         >
                           <ExternalLink className="w-4 h-4 text-muted-foreground hover:text-[#002244]" />
                         </button>
-                        <button
-                          onClick={(e) => handleDeleteClick(e, thread.id, thread.title)}
-                          className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
-                          data-testid={`delete-thread-${thread.id}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
-                        </button>
+                        {canWrite && (
+                          <button
+                            onClick={(e) => handleDeleteClick(e, thread.id, thread.title)}
+                            className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
+                            data-testid={`delete-thread-${thread.id}`}
+                          >
+                            <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                          </button>
+                        )}
                       </div>
                       
                       {isExpanded && actions.length > 0 && (
@@ -556,7 +648,7 @@ export default function MyThreads() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {selectedAction.type !== 'research' && (
+                {canWrite && selectedAction.type !== 'research' && (
                   <Button 
                     onClick={handleSaveAction}
                     disabled={updateNodeMutation.isPending}
@@ -662,9 +754,10 @@ export default function MyThreads() {
                       </Label>
                       <Textarea
                         value={editedContent}
-                        onChange={(e) => setEditedContent(e.target.value)}
-                        placeholder="Enter your content here..."
-                        className="min-h-[300px] text-base leading-relaxed resize-y"
+                        onChange={(e) => canWrite && setEditedContent(e.target.value)}
+                        readOnly={!canWrite}
+                        placeholder={canWrite ? "Enter your content here..." : "You have read-only access to this content."}
+                        className={`min-h-[300px] text-base leading-relaxed resize-y ${!canWrite ? "opacity-70 cursor-default" : ""}`}
                         data-testid="textarea-content"
                       />
                     </div>
@@ -756,6 +849,143 @@ export default function MyThreads() {
           </div>
         )}
       </div>
+
+      <Sheet open={synthesizeOpen} onOpenChange={setSynthesizeOpen}>
+        <SheetContent className="w-full sm:max-w-lg flex flex-col" data-testid="sheet-synthesize">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Merge className="w-5 h-5 text-[#002244]" />
+              Synthesize Threads
+            </SheetTitle>
+            <SheetDescription>
+              Select at least 2 threads to merge into a unified document.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-hidden flex flex-col gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="synthesize-title">Output Title</Label>
+              <Input
+                id="synthesize-title"
+                placeholder="e.g., Q3 Budget Strategy Memo"
+                value={synthesizeTitle}
+                onChange={(e) => setSynthesizeTitle(e.target.value)}
+                disabled={synthesizeMutation.isPending}
+                data-testid="input-synthesize-title"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="synthesize-format">Output Format</Label>
+              <Select
+                value={synthesizeFormat}
+                onValueChange={setSynthesizeFormat}
+                disabled={synthesizeMutation.isPending}
+              >
+                <SelectTrigger id="synthesize-format" data-testid="select-synthesize-format">
+                  <SelectValue placeholder="Choose a format..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Unified Memo">Unified Memo</SelectItem>
+                  <SelectItem value="Strategy Brief">Strategy Brief</SelectItem>
+                  <SelectItem value="Action Plan">Action Plan</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2 flex-1 min-h-0">
+              <Label>
+                Select Threads
+                <span className="ml-2 text-xs text-muted-foreground font-normal">
+                  ({synthesizeSelected.size} selected)
+                </span>
+              </Label>
+              <ScrollArea className="flex-1 border rounded-md">
+                <div className="p-2 space-y-1">
+                  {allThreadsSorted.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">No threads available</p>
+                  ) : (
+                    allThreadsSorted.map((thread) => {
+                      const isChecked = synthesizeSelected.has(thread.id);
+                      return (
+                        <div
+                          key={thread.id}
+                          role="checkbox"
+                          aria-checked={isChecked}
+                          tabIndex={0}
+                          onClick={() => !synthesizeMutation.isPending && toggleSynthesizeThread(thread.id)}
+                          onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); !synthesizeMutation.isPending && toggleSynthesizeThread(thread.id); }}}
+                          className={cn(
+                            "w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors cursor-pointer",
+                            isChecked
+                              ? "bg-[#002244]/10 border border-[#002244]/20"
+                              : "hover:bg-muted/50 border border-transparent",
+                            synthesizeMutation.isPending && "opacity-50 cursor-not-allowed"
+                          )}
+                          data-testid={`synthesize-thread-${thread.id}`}
+                        >
+                          <Checkbox
+                            checked={isChecked}
+                            tabIndex={-1}
+                            className="pointer-events-none"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{thread.title}</p>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                              <Calendar className="w-3 h-3" />
+                              {new Date(thread.createdAt).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                              <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
+                                {thread.status}
+                              </Badge>
+                            </div>
+                          </div>
+                          {isChecked && (
+                            <Check className="w-4 h-4 text-[#002244] flex-shrink-0" />
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+          </div>
+
+          <SheetFooter className="gap-2 sm:gap-0">
+            {synthesizeMutation.isPending ? (
+              <div className="flex items-center justify-center gap-2 w-full py-2">
+                <Loader2 className="w-4 h-4 animate-spin text-[#002244]" />
+                <span className="text-sm font-medium text-[#002244]">Synthesizing threads…</span>
+              </div>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setSynthesizeOpen(false)}
+                  data-testid="button-cancel-synthesize"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSynthesize}
+                  disabled={synthesizeSelected.size < 2 || !synthesizeTitle.trim() || !synthesizeFormat}
+                  className="bg-[#002244] hover:bg-[#002244]/90"
+                  data-testid="button-submit-synthesize"
+                >
+                  <Merge className="w-4 h-4 mr-2" />
+                  Synthesize {synthesizeSelected.size >= 2 ? `(${synthesizeSelected.size})` : ""}
+                </Button>
+              </>
+            )}
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       <AlertDialog open={deleteId !== null} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>

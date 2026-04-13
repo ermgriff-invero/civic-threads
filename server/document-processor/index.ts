@@ -1,11 +1,7 @@
 import { PDFParse } from "pdf-parse";
-import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import { getOpenAI } from "../openai-client";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 
@@ -48,7 +44,7 @@ export async function transcribeAudio(buffer: Buffer, fileName: string): Promise
 
     try {
       const fileStream = fs.createReadStream(tempFilePath);
-      const response = await openai.audio.transcriptions.create({
+      const response = await getOpenAI().audio.transcriptions.create({
         file: fileStream,
         model: "whisper-1",
         response_format: "text",

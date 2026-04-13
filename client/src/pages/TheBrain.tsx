@@ -468,13 +468,15 @@ export default function TheBrain() {
                         )}>
                           {thread.status}
                         </Badge>
-                        <button
-                          onClick={(e) => handleDeleteClick(e, thread.id, thread.title)}
-                          className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10"
-                          data-testid={`delete-thread-${thread.id}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive transition-colors" />
-                        </button>
+                        {user && (
+                          <button
+                            onClick={(e) => handleDeleteClick(e, thread.id, thread.title)}
+                            className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10"
+                            data-testid={`delete-thread-${thread.id}`}
+                          >
+                            <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive transition-colors" />
+                          </button>
+                        )}
                       </CardHeader>
                       <CardContent>
                         <h3 className="font-bold text-xl leading-tight mb-3 text-[#002244] group-hover:text-primary transition-colors">
@@ -499,20 +501,20 @@ export default function TheBrain() {
                 </Link>
               ))}
               
-              <Link href="/thread/new">
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.6 }}
-                >
-                  <Card className="h-full border-dashed border-2 border-[#002244]/30 hover:border-[#002244] hover:bg-[#002244]/5 cursor-pointer transition-all flex flex-col items-center justify-center p-6 text-[#002244]/60 hover:text-[#002244] min-h-[180px] group" data-testid="card-new-thread">
-                    <div className="h-12 w-12 rounded-full bg-[#002244]/10 group-hover:bg-[#002244]/20 flex items-center justify-center mb-3 transition-colors">
-                      <Plus className="w-6 h-6" />
-                    </div>
-                    <span className="font-medium">Start New Thread</span>
-                  </Card>
-                </motion.div>
-              </Link>
+                <Link href="/thread/new">
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.6 }}
+                  >
+                    <Card className="h-full border-dashed border-2 border-[#002244]/30 hover:border-[#002244] hover:bg-[#002244]/5 cursor-pointer transition-all flex flex-col items-center justify-center p-6 text-[#002244]/60 hover:text-[#002244] min-h-[180px] group" data-testid="card-new-thread">
+                      <div className="h-12 w-12 rounded-full bg-[#002244]/10 group-hover:bg-[#002244]/20 flex items-center justify-center mb-3 transition-colors">
+                        <Plus className="w-6 h-6" />
+                      </div>
+                      <span className="font-medium">Start New Thread</span>
+                    </Card>
+                  </motion.div>
+                </Link>
             </div>
           </motion.section>
         )}
