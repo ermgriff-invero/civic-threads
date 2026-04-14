@@ -19,19 +19,62 @@ export interface ShadowTreeMapSummarizationParams {
   maxCompletionTokens: number;
   maxDocs: number;
   summaryModel?: string;
+  /**
+   * When true, only docs with `docSummaryStale` and folders with `isDirty` are candidates.
+   * Docs never summarized yet need a full run first (`docSummaryStale` is set on new/changed sync).
+   */
+  dirtyOnly?: boolean;
 }
 
 export interface ShadowTreeMapSummarizationResult {
   tenantKey: string;
   model: string;
   maxCompletionTokens: number;
+  dirtyOnly: boolean;
+  finishedAt: string;
   scope: { rootName: string; rootId: string };
   docsConsidered: number;
   docsSummarized: number;
+  /** Doc had no `AI summary:` before this run. */
+  docsFirstSummarized: number;
+  /** Doc already had an AI summary; replaced in this run. */
+  docsRegenerated: number;
   docFailures: Array<{ docId: number; title: string; error: string }>;
+  /** Folder rollup produced by OpenAI this run. */
   foldersSummarized: number;
+  /** Folder had no `ai_summary` before OpenAI rollup. */
+  foldersFirstSummarized: number;
+  /** Folder already had `ai_summary`; replaced by OpenAI rollup. */
+  foldersRegenerated: number;
+  /** Dirty folder cleared without LLM (no doc/child text to aggregate). */
+  foldersDirtyClearedNoRollup: number;
   folderFailures: Array<{ folderId: number; title: string; error: string }>;
   docSummaries: Array<{ docId: number; title: string; summary: string; folderId: number | null }>;
+  /** Pilot subtree size at end of run (same scope as shadow-tree stats). */
+  mapSnapshot: { totalDocs: number; totalFolders: number };
+  /** One row per doc candidate in this run (same order as processed). */
+  docRunLog: Array<{
+    docId: number;
+    title: string;
+    action: "summarized_first" | "summarized_regen" | "failed";
+    detail?: string;
+  }>;
+  /**
+   * One row per folder in bottom-up traversal order. Stale-only: `skipped_not_dirty` means the folder
+   * was not on the dirty chain (e.g. sibling of the folder that contained the edited doc).
+   */
+  folderRunLog: Array<{
+    folderId: number;
+    title: string;
+    action:
+      | "rollup_first"
+      | "rollup_regen"
+      | "dirty_cleared_no_rollup"
+      | "skipped_not_dirty"
+      | "noop_nothing_to_roll_up"
+      | "rollup_failed";
+    detail?: string;
+  }>;
 }
 
 function applyTemperatureForModel(
@@ -81,6 +124,26 @@ function buildDocsByFolder(
   return docsByFolder;
 }
 
+/** Child folder summary text for rollup: this run’s OpenAI output, else existing DB `ai_summary`. */
+function childFolderSummariesForRollup(
+  childrenByFolder: Map<number, number[]>,
+  parentFolderId: number,
+  folderMap: Map<number, KnowledgeFolder>,
+  folderSummaryText: Map<number, string>,
+): string[] {
+  const bits: string[] = [];
+  for (const cid of childrenByFolder.get(parentFolderId) ?? []) {
+    const fromThisRun = folderSummaryText.get(cid);
+    if (fromThisRun) {
+      bits.push(fromThisRun);
+      continue;
+    }
+    const db = folderMap.get(cid)?.aiSummary?.trim();
+    if (db) bits.push(db);
+  }
+  return bits;
+}
+
 export async function runShadowTreeMapSummarization(
   params: ShadowTreeMapSummarizationParams,
 ): Promise<ShadowTreeMapSummarizationResult> {
@@ -93,6 +156,7 @@ export async function runShadowTreeMapSummarization(
     maxCompletionTokens,
     maxDocs,
   } = params;
+  const dirtyOnly = Boolean(params.dirtyOnly);
   const summaryModel = params.summaryModel?.trim() || process.env.SHADOW_TREE_SUMMARY_MODEL?.trim() || "gpt-4o-mini";
 
   const scope = await resolveRootFolderByExactName(refreshToken, scopedRootName);
@@ -105,15 +169,23 @@ export async function runShadowTreeMapSummarization(
   const subtreeFolderIds = collectSubtreeFolderIds(root, folders);
   const docs = await storage.getDriveDocumentsByFolderIds(subtreeFolderIds);
 
-  const candidateDocs = docs
-    .filter((d) => d.externalId)
-    .filter((d) => !d.description?.startsWith("AI summary:"))
-    .slice(0, maxDocs);
+  const needsDocSummary = (d: (typeof docs)[number]) => {
+    const missing = !d.description?.startsWith("AI summary:");
+    if (d.sourceSystem !== "gdrive") return missing;
+    if (dirtyOnly) return d.docSummaryStale === true;
+    return missing;
+  };
+
+  const candidateDocs = docs.filter((d) => d.externalId).filter(needsDocSummary).slice(0, maxDocs);
 
   const docSummaries: ShadowTreeMapSummarizationResult["docSummaries"] = [];
   const docFailures: ShadowTreeMapSummarizationResult["docFailures"] = [];
+  const docRunLog: ShadowTreeMapSummarizationResult["docRunLog"] = [];
+  let docsFirstSummarized = 0;
+  let docsRegenerated = 0;
 
   for (const doc of candidateDocs) {
+    const hadDocAiSummary = Boolean(doc.description?.startsWith("AI summary:"));
     try {
       const preview = await (verbose
         ? driveDebugTimed(steps, `preview:${doc.id}`, () =>
@@ -122,6 +194,12 @@ export async function runShadowTreeMapSummarization(
         : previewDriveFile(refreshToken, doc.externalId!, undefined));
       if (!preview.text?.trim()) {
         docFailures.push({ docId: doc.id, title: doc.title, error: "No extractable text preview." });
+        docRunLog.push({
+          docId: doc.id,
+          title: doc.title,
+          action: "failed",
+          detail: "No extractable text preview.",
+        });
         continue;
       }
 
@@ -147,27 +225,44 @@ export async function runShadowTreeMapSummarization(
       );
       const summary = completion.choices[0]?.message?.content?.trim();
       if (!summary) {
+        const err = `Empty summary (finish_reason=${completion.choices[0]?.finish_reason ?? "unknown"})`;
         docFailures.push({
           docId: doc.id,
           title: doc.title,
-          error: `Empty summary (finish_reason=${completion.choices[0]?.finish_reason ?? "unknown"})`,
+          error: err,
         });
+        docRunLog.push({ docId: doc.id, title: doc.title, action: "failed", detail: err });
         continue;
       }
       await storage.updateDocument(doc.id, {
         description: `AI summary: ${summary}`,
         processingStatus: "summarized",
         indexed: true,
+        docSummaryStale: false,
       });
+      if (doc.folderId !== null) {
+        await storage.markFolderAndAncestorsDirty(tenantKey, doc.folderId);
+      }
       docSummaries.push({
         docId: doc.id,
         title: doc.title,
         summary,
         folderId: doc.folderId,
       });
+      if (hadDocAiSummary) {
+        docsRegenerated += 1;
+      } else {
+        docsFirstSummarized += 1;
+      }
+      docRunLog.push({
+        docId: doc.id,
+        title: doc.title,
+        action: hadDocAiSummary ? "summarized_regen" : "summarized_first",
+      });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       docFailures.push({ docId: doc.id, title: doc.title, error: msg });
+      docRunLog.push({ docId: doc.id, title: doc.title, action: "failed", detail: msg });
     }
   }
 
@@ -202,18 +297,46 @@ export async function runShadowTreeMapSummarization(
 
   const folderSummaryText = new Map<number, string>();
   let foldersSummarized = 0;
+  let foldersFirstSummarized = 0;
+  let foldersRegenerated = 0;
+  let foldersDirtyClearedNoRollup = 0;
   const folderFailures: ShadowTreeMapSummarizationResult["folderFailures"] = [];
+  const folderRunLog: ShadowTreeMapSummarizationResult["folderRunLog"] = [];
 
   for (const fid of ordered) {
     const node = folderMap.get(fid);
     if (!node) continue;
+    if (dirtyOnly) {
+      const live = await storage.getKnowledgeFolderByIdForTenant(tenantKey, fid);
+      if (!live?.isDirty) {
+        folderRunLog.push({ folderId: fid, title: node.title, action: "skipped_not_dirty" });
+        continue;
+      }
+    }
     const docBits = docsByFolder.get(fid) ?? [];
-    const childBits = (childrenByFolder.get(fid) ?? [])
-      .map((cid) => folderSummaryText.get(cid))
-      .filter((s): s is string => Boolean(s));
+    const childBits = childFolderSummariesForRollup(childrenByFolder, fid, folderMap, folderSummaryText);
     if (docBits.length === 0 && childBits.length === 0) {
+      const live = await storage.getKnowledgeFolderByIdForTenant(tenantKey, fid);
+      if (live?.isDirty) {
+        await storage.upsertKnowledgeFolderByExternalId({
+          tenantKey,
+          connectionId: node.connectionId,
+          parentId: node.parentId,
+          title: node.title,
+          externalId: node.externalId,
+          aiSummary: node.aiSummary ?? null,
+          isDirty: false,
+          driveModifiedAt: node.driveModifiedAt ?? undefined,
+          syncedAt: new Date(),
+        });
+        foldersDirtyClearedNoRollup += 1;
+        folderRunLog.push({ folderId: fid, title: node.title, action: "dirty_cleared_no_rollup" });
+      } else {
+        folderRunLog.push({ folderId: fid, title: node.title, action: "noop_nothing_to_roll_up" });
+      }
       continue;
     }
+    const hadFolderAiSummary = Boolean(node.aiSummary?.trim());
     const aggregateInput = `Folder: ${node.title}\n\nDocument summaries:\n${docBits
       .slice(0, 8)
       .map((s, i) => `${i + 1}. ${s}`)
@@ -243,11 +366,13 @@ export async function runShadowTreeMapSummarization(
       );
       const s = completion.choices[0]?.message?.content?.trim();
       if (!s) {
+        const err = `Empty folder summary (finish_reason=${completion.choices[0]?.finish_reason ?? "unknown"})`;
         folderFailures.push({
           folderId: fid,
           title: node.title,
-          error: `Empty folder summary (finish_reason=${completion.choices[0]?.finish_reason ?? "unknown"})`,
+          error: err,
         });
+        folderRunLog.push({ folderId: fid, title: node.title, action: "rollup_failed", detail: err });
         continue;
       }
       folderSummaryText.set(fid, s);
@@ -259,25 +384,55 @@ export async function runShadowTreeMapSummarization(
         externalId: node.externalId,
         aiSummary: s,
         isDirty: false,
+        driveModifiedAt: node.driveModifiedAt ?? undefined,
         syncedAt: new Date(),
       });
       foldersSummarized += 1;
+      if (hadFolderAiSummary) {
+        foldersRegenerated += 1;
+      } else {
+        foldersFirstSummarized += 1;
+      }
+      folderRunLog.push({
+        folderId: fid,
+        title: node.title,
+        action: hadFolderAiSummary ? "rollup_regen" : "rollup_first",
+      });
+      if (node.parentId !== null) {
+        await storage.markFolderAndAncestorsDirty(tenantKey, node.parentId);
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       folderFailures.push({ folderId: fid, title: node.title, error: msg });
+      folderRunLog.push({ folderId: fid, title: node.title, action: "rollup_failed", detail: msg });
     }
   }
+
+  const gdocsInSubtree = docs.filter((d) => d.sourceSystem === "gdrive");
 
   return {
     tenantKey,
     model: summaryModel,
     maxCompletionTokens,
+    dirtyOnly,
+    finishedAt: new Date().toISOString(),
     scope: { rootName: scopedRootName, rootId: scope.folderId },
     docsConsidered: candidateDocs.length,
     docsSummarized: docSummaries.length,
+    docsFirstSummarized,
+    docsRegenerated,
     docFailures: docFailures.slice(0, 20),
     foldersSummarized,
+    foldersFirstSummarized,
+    foldersRegenerated,
+    foldersDirtyClearedNoRollup,
     folderFailures: folderFailures.slice(0, 20),
     docSummaries,
+    mapSnapshot: {
+      totalDocs: gdocsInSubtree.length,
+      totalFolders: subtreeFolderIds.length,
+    },
+    docRunLog,
+    folderRunLog,
   };
 }

@@ -164,6 +164,7 @@ export async function registerRoutes(
           tags: ["thread-archive", thread.type?.toLowerCase() || "general"],
           year: new Date().getFullYear(),
           indexed: true,
+          processingStatus: "pending",
           isActive: true,
         });
       }
@@ -612,6 +613,8 @@ Write in a clear, operational style suitable for project management.`,
         filePath,
         mediaType: mimetype,
         fileSize: size,
+        tags: [],
+        isActive: true,
       });
 
       res.status(201).json(doc);
@@ -2092,6 +2095,7 @@ Generate a complete, professional document that synthesizes the research finding
         meetingDate,
         location: location || null,
         description: description || null,
+        status: "draft",
         createdBy: req.session.userId!,
       });
       res.json(meeting);

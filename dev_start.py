@@ -27,7 +27,7 @@ Google Drive connector (Shadow Tree Day 1 — OAuth, any signed-in user for pilo
   - Diagnostics: GET /api/integrations/google-drive/diagnostics (signed in)
   - UI: /knowledge-base-2 (any signed-in user; pilot)
   - Day 3: POST /api/integrations/google-drive/summaries/run (bottom-up map; KB2 “Run Full Map Summaries”)
-  - Day 4: GET /api/integrations/google-drive/shadow-tree/tree (nested DB map); POST …/shadow-tree/query (tools + optional tree snapshot); GET …/shadow-tree/tools/list-folder & read-document
+  - Day 4: GET …/shadow-tree/tree (nested DB map); GET …/shadow-tree/stats (dirty / missing-summary counts); POST …/shadow-tree/query; GET …/shadow-tree/tools/list-folder & read-document
   - Code: server/connectors/google-drive/
 """
 

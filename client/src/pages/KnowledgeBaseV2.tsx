@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import {
+  ChevronDown,
   ChevronRight,
   Cloud,
   FileText,
@@ -12,10 +13,12 @@ import {
   ExternalLink,
   Sparkles,
   Layers,
+  History,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +74,18 @@ type ScopeResponse = {
   rootId: string;
 };
 
+type ShadowTreePilotStatsOk = {
+  ok: true;
+  tenantKey: string;
+  scopedRootName: string;
+  totalFolders: number;
+  totalDocs: number;
+  dirtyFolders: number;
+  foldersMissingAiSummary: number;
+  docsMissingAiSummary: number;
+  docsMarkedStale: number;
+};
+
 type SyncResponse = {
   ok: boolean;
   tenantKey: string;
@@ -82,8 +97,163 @@ type SyncResponse = {
   foldersUpserted: number;
   docsUpserted: number;
   pagesFetched: number;
+  driveChangesPages?: number;
+  /** Local DB map health after a live sync (not dry-run). */
+  shadowStats?: ShadowTreePilotStatsOk | { error: string } | null;
   debug?: { steps: DriveDebugStep[]; at: string };
 };
+
+function formatShadowStatsLines(s: ShadowTreePilotStatsOk): string[] {
+  return [
+    `Folders: ${s.totalFolders} in map · ${s.dirtyFolders} dirty · ${s.foldersMissingAiSummary} without folder summary`,
+    `Docs: ${s.totalDocs} in map · ${s.docsMissingAiSummary} without doc summary · ${s.docsMarkedStale} stale (Drive changed)`,
+  ];
+}
+
+function shadowStatsToastDescription(s: ShadowTreePilotStatsOk): string {
+  return formatShadowStatsLines(s).join(" · ");
+}
+
+type MapRunLogDoc = { docId: number; title: string; action: string; detail?: string };
+type MapRunLogFolder = { folderId: number; title: string; action: string; detail?: string };
+
+/** Successful POST …/summaries/run body (subset used in UI). */
+type SummariesRunOk = {
+  ok: true;
+  dirtyOnly: boolean;
+  finishedAt: string;
+  mapSnapshot: { totalDocs: number; totalFolders: number };
+  docsConsidered: number;
+  docsSummarized: number;
+  docsFirstSummarized: number;
+  docsRegenerated: number;
+  foldersSummarized: number;
+  foldersFirstSummarized: number;
+  foldersRegenerated: number;
+  foldersDirtyClearedNoRollup: number;
+  docFailures: unknown[];
+  folderFailures: unknown[];
+  docRunLog: MapRunLogDoc[];
+  folderRunLog: MapRunLogFolder[];
+};
+
+type LastMapSummaryRunDisplay = {
+  mode: "full" | "stale";
+  finishedAt: string;
+  mapSnapshot: { totalDocs: number; totalFolders: number };
+  docsConsidered: number;
+  docsSummarized: number;
+  docsFirstSummarized: number;
+  docsRegenerated: number;
+  foldersSummarized: number;
+  foldersFirstSummarized: number;
+  foldersRegenerated: number;
+  foldersDirtyClearedNoRollup: number;
+  docFailureCount: number;
+  folderFailureCount: number;
+  docRunLog: MapRunLogDoc[];
+  folderRunLog: MapRunLogFolder[];
+};
+
+function summariesRunToDisplay(d: SummariesRunOk, mode: "full" | "stale"): LastMapSummaryRunDisplay {
+  return {
+    mode,
+    finishedAt: d.finishedAt,
+    mapSnapshot: d.mapSnapshot,
+    docsConsidered: d.docsConsidered,
+    docsSummarized: d.docsSummarized,
+    docsFirstSummarized: d.docsFirstSummarized,
+    docsRegenerated: d.docsRegenerated,
+    foldersSummarized: d.foldersSummarized,
+    foldersFirstSummarized: d.foldersFirstSummarized,
+    foldersRegenerated: d.foldersRegenerated,
+    foldersDirtyClearedNoRollup: d.foldersDirtyClearedNoRollup,
+    docFailureCount: Array.isArray(d.docFailures) ? d.docFailures.length : 0,
+    folderFailureCount: Array.isArray(d.folderFailures) ? d.folderFailures.length : 0,
+    docRunLog: d.docRunLog,
+    folderRunLog: d.folderRunLog,
+  };
+}
+
+function parseDocRunLog(raw: unknown): MapRunLogDoc[] {
+  if (!Array.isArray(raw)) return [];
+  const out: MapRunLogDoc[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.docId !== "number" || typeof o.title !== "string" || typeof o.action !== "string") continue;
+    out.push({
+      docId: o.docId,
+      title: o.title,
+      action: o.action,
+      detail: typeof o.detail === "string" ? o.detail : undefined,
+    });
+  }
+  return out;
+}
+
+function parseFolderRunLog(raw: unknown): MapRunLogFolder[] {
+  if (!Array.isArray(raw)) return [];
+  const out: MapRunLogFolder[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.folderId !== "number" || typeof o.title !== "string" || typeof o.action !== "string") continue;
+    out.push({
+      folderId: o.folderId,
+      title: o.title,
+      action: o.action,
+      detail: typeof o.detail === "string" ? o.detail : undefined,
+    });
+  }
+  return out;
+}
+
+function formatDocRunAction(action: string): string {
+  switch (action) {
+    case "summarized_first":
+      return "Summarized (first time)";
+    case "summarized_regen":
+      return "Summarized (regenerated)";
+    case "failed":
+      return "Failed";
+    default:
+      return action;
+  }
+}
+
+function formatFolderRunAction(action: string): string {
+  switch (action) {
+    case "rollup_first":
+      return "OpenAI folder rollup (first summary)";
+    case "rollup_regen":
+      return "OpenAI folder rollup (regenerated)";
+    case "dirty_cleared_no_rollup":
+      return "Dirty cleared — no doc/child text to aggregate";
+    case "skipped_not_dirty":
+      return "Skipped — not dirty (off the change chain, e.g. sibling folder)";
+    case "noop_nothing_to_roll_up":
+      return "No work — nothing to aggregate, folder already clean";
+    case "rollup_failed":
+      return "OpenAI rollup failed";
+    default:
+      return action;
+  }
+}
+
+function appendSyncStatsToDescription(
+  base: string,
+  shadowStats: SyncResponse["shadowStats"],
+): string {
+  if (!shadowStats) return base;
+  if ("error" in shadowStats) {
+    return `${base} (Map stats: ${shadowStats.error})`;
+  }
+  if ("totalFolders" in shadowStats) {
+    return `${base} ${shadowStatsToastDescription(shadowStats as ShadowTreePilotStatsOk)}`;
+  }
+  return base;
+}
 
 type LogEntry = {
   id: string;
@@ -250,7 +420,8 @@ export default function KnowledgeBaseV2() {
   const { user, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [verboseDebug, setVerboseDebug] = useState(true);
+  const [verboseDebug, setVerboseDebug] = useState(false);
+  const [connectionAdvancedOpen, setConnectionAdvancedOpen] = useState(false);
   const [breadcrumb, setBreadcrumb] = useState<{ id: string; name: string }[]>([
     { id: "root", name: "My Drive" },
   ]);
@@ -263,6 +434,7 @@ export default function KnowledgeBaseV2() {
   const [verifyRunning, setVerifyRunning] = useState(false);
   const [summaryRunning, setSummaryRunning] = useState(false);
   const [fullMapSummaryRunning, setFullMapSummaryRunning] = useState(false);
+  const [staleOnlySummaryRunning, setStaleOnlySummaryRunning] = useState(false);
   const [agentQuestion, setAgentQuestion] = useState(
     "What documents are in the pilot folder, and what is one key theme from TD Design Patterns?",
   );
@@ -275,6 +447,7 @@ export default function KnowledgeBaseV2() {
     toolCallsExecuted?: number;
     rootFolderId?: number;
   } | null>(null);
+  const [lastMapSummaryRun, setLastMapSummaryRun] = useState<LastMapSummaryRunDisplay | null>(null);
 
   const parentId = breadcrumb[breadcrumb.length - 1]?.id ?? "root";
 
@@ -333,6 +506,29 @@ export default function KnowledgeBaseV2() {
     queryFn: async () => {
       const r = await driveFetchJson<ShadowTreeApiResponse>("/api/integrations/google-drive/shadow-tree/tree");
       appendLog("shadow-tree", r.ok, r.data);
+      if (!r.ok) {
+        const msg =
+          typeof r.data === "object" && r.data && "message" in r.data
+            ? String((r.data as { message: string }).message)
+            : `HTTP ${r.status}`;
+        throw new Error(msg);
+      }
+      return r.data;
+    },
+    enabled: !authLoading && Boolean(user) && Boolean(status?.connected),
+    retry: false,
+  });
+
+  const {
+    data: shadowPilotStats,
+    isLoading: shadowStatsLoading,
+    error: shadowStatsError,
+  } = useQuery({
+    queryKey: ["/api/integrations/google-drive/shadow-tree/stats"],
+    queryFn: async () => {
+      const r = await driveFetchJson<ShadowTreePilotStatsOk>(
+        "/api/integrations/google-drive/shadow-tree/stats",
+      );
       if (!r.ok) {
         const msg =
           typeof r.data === "object" && r.data && "message" in r.data
@@ -536,9 +732,11 @@ export default function KnowledgeBaseV2() {
           Array.isArray(q.queryKey) && q.queryKey[0] === "/api/integrations/google-drive/peek",
       });
       queryClient.removeQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/tree"] });
+      queryClient.removeQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/stats"] });
       setBreadcrumb([{ id: "root", name: "My Drive" }]);
       setSelectedFile(null);
       setPreviewResult(null);
+      setLastMapSummaryRun(null);
       toast({ title: "Disconnected", description: "Google Drive unlinked for this tenant." });
     } catch (e) {
       appendLog("disconnect", false, { error: String(e) });
@@ -567,13 +765,19 @@ export default function KnowledgeBaseV2() {
             : `HTTP ${r.status}`,
         );
       }
-      const body = r.data;
+      const body = r.data as SyncResponse;
       toast({
         title: dryRun ? "Dry run complete" : "Sync complete",
-        description: `${body.foldersSeen} folders, ${body.filesSeen} files scanned`,
+        description: dryRun
+          ? `${body.foldersSeen} folders, ${body.filesSeen} files scanned (dry run — DB unchanged)`
+          : appendSyncStatsToDescription(
+              `${body.foldersSeen} folders, ${body.filesSeen} files scanned from Drive.`,
+              body.shadowStats,
+            ),
       });
       if (!dryRun) {
         await queryClient.invalidateQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/tree"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/stats"] });
         await Promise.all([refetchPeek(), refetchScope()]);
       }
     } catch (error) {
@@ -608,12 +812,16 @@ export default function KnowledgeBaseV2() {
               : `HTTP ${r.status}`,
         );
       }
-      const body = r.data;
+      const body = r.data as SyncResponse;
       await queryClient.invalidateQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/tree"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/stats"] });
       await Promise.all([refetchPeek(), refetchScope()]);
       toast({
-        title: "Shadow tree refreshed",
-        description: `${body.foldersSeen} folders, ${body.filesSeen} files scanned. Run Full Map Summaries to refresh AI text.`,
+        title: "Sync from Drive complete",
+        description: appendSyncStatsToDescription(
+          `${body.foldersSeen} folders, ${body.filesSeen} files scanned from Drive.`,
+          body.shadowStats,
+        ),
       });
     } catch (error) {
       appendLog("shadow-tree-refresh-sync", false, { error: String(error) });
@@ -682,17 +890,20 @@ export default function KnowledgeBaseV2() {
     }
   };
 
-  /** Day 3: bottom-up map — summarize up to N unsynced docs, then roll up folder `ai_summary` rows. */
-  const runFullMapSummaries = async () => {
-    setFullMapSummaryRunning(true);
+  /** Day 3: bottom-up map — summarize docs + folder rollups. `dirtyOnly` skips already-clean rows when possible. */
+  const runMapSummaries = async (dirtyOnly: boolean) => {
+    const setRunning = dirtyOnly ? setStaleOnlySummaryRunning : setFullMapSummaryRunning;
+    const label = dirtyOnly ? "Stale summaries only" : "Run Full Map Summaries";
+    setRunning(true);
     try {
       const q = verboseDebug ? "?debug=1" : "";
       const r = await drivePostJson<Record<string, unknown>>(`/api/integrations/google-drive/summaries/run${q}`, {
         maxCompletionTokens: 400,
+        dirtyOnly,
       });
       const logicalOk = r.ok && !isHtmlFallbackPayload(r.data);
-      appendLog("summary-run-map", logicalOk, r.data);
-      logButtonResult("Run Full Map Summaries", logicalOk, r.data);
+      appendLog(dirtyOnly ? "summary-run-stale" : "summary-run-map", logicalOk, r.data);
+      logButtonResult(label, logicalOk, r.data);
       if (!logicalOk) {
         throw new Error(
           isHtmlFallbackPayload(r.data)
@@ -702,23 +913,51 @@ export default function KnowledgeBaseV2() {
               : `HTTP ${r.status}`,
         );
       }
-      const d = r.data as {
-        docsSummarized?: number;
-        foldersSummarized?: number;
-        docsConsidered?: number;
+      const raw = r.data as Record<string, unknown>;
+      const mapSnap = raw.mapSnapshot as { totalDocs?: number; totalFolders?: number } | undefined;
+      const summaryPayload: SummariesRunOk = {
+        ok: true,
+        dirtyOnly: Boolean(raw.dirtyOnly),
+        finishedAt: typeof raw.finishedAt === "string" ? raw.finishedAt : new Date().toISOString(),
+        mapSnapshot: {
+          totalDocs: typeof mapSnap?.totalDocs === "number" ? mapSnap.totalDocs : 0,
+          totalFolders: typeof mapSnap?.totalFolders === "number" ? mapSnap.totalFolders : 0,
+        },
+        docsConsidered: typeof raw.docsConsidered === "number" ? raw.docsConsidered : 0,
+        docsSummarized: typeof raw.docsSummarized === "number" ? raw.docsSummarized : 0,
+        docsFirstSummarized: typeof raw.docsFirstSummarized === "number" ? raw.docsFirstSummarized : 0,
+        docsRegenerated: typeof raw.docsRegenerated === "number" ? raw.docsRegenerated : 0,
+        foldersSummarized: typeof raw.foldersSummarized === "number" ? raw.foldersSummarized : 0,
+        foldersFirstSummarized: typeof raw.foldersFirstSummarized === "number" ? raw.foldersFirstSummarized : 0,
+        foldersRegenerated: typeof raw.foldersRegenerated === "number" ? raw.foldersRegenerated : 0,
+        foldersDirtyClearedNoRollup:
+          typeof raw.foldersDirtyClearedNoRollup === "number" ? raw.foldersDirtyClearedNoRollup : 0,
+        docFailures: Array.isArray(raw.docFailures) ? raw.docFailures : [],
+        folderFailures: Array.isArray(raw.folderFailures) ? raw.folderFailures : [],
+        docRunLog: parseDocRunLog(raw.docRunLog),
+        folderRunLog: parseFolderRunLog(raw.folderRunLog),
       };
+      setLastMapSummaryRun(summariesRunToDisplay(summaryPayload, dirtyOnly ? "stale" : "full"));
       await queryClient.invalidateQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/tree"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/integrations/google-drive/shadow-tree/stats"] });
       toast({
-        title: "Map summaries updated",
-        description: `${d.docsSummarized ?? "—"} docs, ${d.foldersSummarized ?? "—"} folders (batch size ${d.docsConsidered ?? "—"} considered).`,
+        title: dirtyOnly ? "Stale summaries updated" : "Map summaries updated",
+        description: `${summaryPayload.docsSummarized} docs (${summaryPayload.docsFirstSummarized} new, ${summaryPayload.docsRegenerated} regen) · ${summaryPayload.foldersSummarized} folder rollups · ${summaryPayload.mapSnapshot.totalDocs} docs in map.`,
       });
     } catch (error) {
-      appendLog("summary-run-map", false, { error: String(error) });
-      toast({ title: "Full map summaries failed", description: String(error), variant: "destructive" });
+      appendLog(dirtyOnly ? "summary-run-stale" : "summary-run-map", false, { error: String(error) });
+      toast({
+        title: dirtyOnly ? "Stale-only summaries failed" : "Full map summaries failed",
+        description: String(error),
+        variant: "destructive",
+      });
     } finally {
-      setFullMapSummaryRunning(false);
+      setRunning(false);
     }
   };
+
+  const runFullMapSummaries = async () => runMapSummaries(false);
+  const runStaleOnlySummaries = async () => runMapSummaries(true);
 
   /** Day 4: OpenAI tool loop — list_folder + read_document. */
   const runShadowTreeAgent = async () => {
@@ -823,16 +1062,18 @@ export default function KnowledgeBaseV2() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Connection</CardTitle>
-          <CardDescription>
-            Tenant:{" "}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">
-              {status?.tenantKey ?? (statusQueryFailed ? "—" : "…")}
-            </code>
+          <CardDescription className="space-y-1">
+            <span>
+              Tenant{" "}
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                {status?.tenantKey ?? (statusQueryFailed ? "—" : "…")}
+              </code>
+            </span>
             {scopeData?.rootId ? (
-              <span className="block mt-2">
-                Scoped root:{" "}
-                <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                  {scopeData.rootName} ({scopeData.rootId})
+              <span className="block text-muted-foreground">
+                Pilot folder: <span className="text-foreground font-medium">{scopeData.rootName}</span>
+                <code className="text-[10px] bg-muted px-1 py-0.5 rounded ml-1.5 hidden sm:inline">
+                  {scopeData.rootId}
                 </code>
               </span>
             ) : null}
@@ -843,121 +1084,261 @@ export default function KnowledgeBaseV2() {
             )}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-3">
+        <CardContent className="space-y-4">
           {status?.connected ? (
             <>
-              <Badge variant="default" className="gap-1">
-                <Cloud className="w-3 h-3" /> Linked
-              </Badge>
-              <Button variant="outline" size="sm" onClick={() => refetchPeek()} disabled={peekLoading}>
-                <RefreshCw className={cn("w-4 h-4 mr-2", peekLoading && "animate-spin")} />
-                Refresh folder
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  const result = await refetchScope();
-                  const ok = result.status === "success";
-                  const logicalOk = ok && !isHtmlFallbackPayload(result.data);
-                  const payload = ok
-                    ? result.data
-                    : { error: result.error ? String(result.error) : "Unknown scope error" };
-                  appendLog("resolve-scope", logicalOk, payload);
-                  logButtonResult("Resolve Scope", logicalOk, payload);
-                  if (logicalOk) {
-                    toast({
-                      title: "Scope resolved",
-                      description: `${result.data?.rootName} (${result.data?.rootId})`,
-                    });
-                  } else {
-                    toast({
-                      title: "Scope resolve failed",
-                      description: result.error ? String(result.error) : "Unknown error",
-                      variant: "destructive",
-                    });
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="default" className="gap-1">
+                  <Cloud className="w-3 h-3" /> Linked
+                </Badge>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => void refreshShadowTree()}
+                  disabled={shadowTreeRefreshing || syncRunning !== null}
+                >
+                  {shadowTreeRefreshing ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                  )}
+                  Sync from Drive
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void runFullMapSummaries()}
+                  disabled={
+                    fullMapSummaryRunning || staleOnlySummaryRunning || summaryRunning
                   }
-                }}
-                disabled={scopeLoading}
-              >
-                <RefreshCw className={cn("w-4 h-4 mr-2", scopeLoading && "animate-spin")} />
-                Resolve Scope
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void runSync(true)}
-                disabled={syncRunning !== null}
-              >
-                {syncRunning === "dry" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Dry Run Sync
-              </Button>
-              <Button size="sm" onClick={() => void runSync(false)} disabled={syncRunning !== null}>
-                {syncRunning === "live" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Run Sync
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void refreshShadowTree()}
-                disabled={shadowTreeRefreshing || syncRunning !== null}
-              >
-                {shadowTreeRefreshing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                Refresh shadow tree
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => void runVerify()} disabled={verifyRunning}>
-                {verifyRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Verify Linkage
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => void runSampleSummary()} disabled={summaryRunning}>
-                {summaryRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Sample Summary
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => void runFullMapSummaries()}
-                disabled={fullMapSummaryRunning || summaryRunning}
-              >
-                {fullMapSummaryRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Run Full Map Summaries
-              </Button>
-              <Button variant="outline" size="sm" onClick={disconnectDrive}>
-                <Unplug className="w-4 h-4 mr-2" />
-                Disconnect
-              </Button>
+                >
+                  {fullMapSummaryRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Full map summaries
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void runStaleOnlySummaries()}
+                  disabled={
+                    fullMapSummaryRunning || staleOnlySummaryRunning || summaryRunning
+                  }
+                  title="Only docs with docSummaryStale and dirty folders. Use Full map for docs never summarized yet."
+                >
+                  {staleOnlySummaryRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Stale only
+                </Button>
+                <Button variant="outline" size="sm" onClick={disconnectDrive}>
+                  <Unplug className="w-4 h-4 mr-2" />
+                  Disconnect
+                </Button>
+              </div>
+              <div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2.5 text-xs space-y-1.5">
+                <div className="font-medium text-foreground">Local map vs Drive (pilot subtree)</div>
+                {shadowStatsLoading ? (
+                  <p className="text-muted-foreground">Loading map stats…</p>
+                ) : shadowStatsError ? (
+                  <p className="text-destructive">
+                    {shadowStatsError instanceof Error ? shadowStatsError.message : String(shadowStatsError)}
+                  </p>
+                ) : shadowPilotStats ? (
+                  formatShadowStatsLines(shadowPilotStats).map((line, i) => (
+                    <p key={i} className="text-muted-foreground leading-snug">
+                      {line}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-muted-foreground">Connect and sync to see stats.</p>
+                )}
+              </div>
+              {lastMapSummaryRun ? (
+                <div className="rounded-md border border-sky-500/25 bg-sky-500/5 px-3 py-2.5 text-xs space-y-1.5">
+                  <div className="font-medium text-foreground flex items-center gap-2">
+                    <History className="w-4 h-4 text-sky-600 shrink-0" />
+                    Last map summary run
+                  </div>
+                  <p className="text-muted-foreground leading-snug">
+                    <span className="text-foreground font-medium">
+                      {lastMapSummaryRun.mode === "stale" ? "Stale only" : "Full map"}
+                    </span>
+                    {" · "}
+                    {new Date(lastMapSummaryRun.finishedAt).toLocaleString()}
+                  </p>
+                  <p className="text-muted-foreground leading-snug">
+                    Pilot map:{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.mapSnapshot.totalDocs}</span> Drive docs,{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.mapSnapshot.totalFolders}</span> folders.
+                  </p>
+                  <p className="text-muted-foreground leading-snug">
+                    This run:{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.docsConsidered}</span> doc candidates →{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.docsSummarized}</span> summarized (
+                    <span className="text-foreground">{lastMapSummaryRun.docsFirstSummarized}</span> first-time,{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.docsRegenerated}</span> regenerated).
+                  </p>
+                  <p className="text-muted-foreground leading-snug">
+                    Folders:{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.foldersSummarized}</span> OpenAI rollups (
+                    <span className="text-foreground">{lastMapSummaryRun.foldersFirstSummarized}</span> new,{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.foldersRegenerated}</span> regen),{" "}
+                    <span className="text-foreground">{lastMapSummaryRun.foldersDirtyClearedNoRollup}</span> dirty
+                    cleared without new rollup text.
+                  </p>
+                  {lastMapSummaryRun.docFailureCount + lastMapSummaryRun.folderFailureCount > 0 ? (
+                    <p className="text-amber-700 dark:text-amber-400 leading-snug">
+                      Failures: {lastMapSummaryRun.docFailureCount} doc(s), {lastMapSummaryRun.folderFailureCount}{" "}
+                      folder(s) — see debug log.
+                    </p>
+                  ) : null}
+                  {lastMapSummaryRun.mode === "stale" ? (
+                    <p className="text-muted-foreground leading-snug border-t border-sky-500/20 pt-2 mt-2">
+                      Stale only re-rollups the <span className="text-foreground">folder that holds the changed doc</span>{" "}
+                      and <span className="text-foreground">ancestors up to the pilot root</span>. Sibling folders (same
+                      depth under root) stay clean and show as &quot;Skipped — not dirty&quot; in the trace below.
+                    </p>
+                  ) : null}
+                  {lastMapSummaryRun.docRunLog.length > 0 ? (
+                    <details className="border-t border-sky-500/20 pt-2 mt-2 group">
+                      <summary className="cursor-pointer text-muted-foreground hover:text-foreground font-medium list-none flex items-center gap-1">
+                        <ChevronRight className="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-90" />
+                        Doc trace ({lastMapSummaryRun.docRunLog.length})
+                      </summary>
+                      <ul className="mt-2 space-y-1 pl-5 border-l border-border/80 text-muted-foreground">
+                        {lastMapSummaryRun.docRunLog.map((e) => (
+                          <li key={`${e.docId}-${e.action}`}>
+                            <span className="text-foreground font-mono text-[10px]">#{e.docId}</span> {e.title}
+                            <span className="text-foreground"> — {formatDocRunAction(e.action)}</span>
+                            {e.detail ? (
+                              <span className="block text-amber-700 dark:text-amber-400/90 pl-0 mt-0.5">{e.detail}</span>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                  {lastMapSummaryRun.folderRunLog.length > 0 ? (
+                    <details className="border-t border-sky-500/20 pt-2 mt-2 group">
+                      <summary className="cursor-pointer text-muted-foreground hover:text-foreground font-medium list-none flex items-center gap-1">
+                        <ChevronRight className="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-90" />
+                        Folder trace, bottom-up ({lastMapSummaryRun.folderRunLog.length})
+                      </summary>
+                      <ul className="mt-2 space-y-1 pl-5 border-l border-border/80 text-muted-foreground">
+                        {lastMapSummaryRun.folderRunLog.map((e) => (
+                          <li key={`${e.folderId}-${e.title}-${e.action}`}>
+                            <span className="text-foreground font-mono text-[10px]">#{e.folderId}</span> {e.title}
+                            <span className="text-foreground"> — {formatFolderRunAction(e.action)}</span>
+                            {e.detail ? (
+                              <span className="block text-amber-700 dark:text-amber-400/90 pl-0 mt-0.5">{e.detail}</span>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  After you run Full map or Stale only, a summary of that pass appears here.
+                </p>
+              )}
+              <Collapsible open={connectionAdvancedOpen} onOpenChange={setConnectionAdvancedOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 px-2 text-muted-foreground">
+                    <ChevronDown
+                      className={cn(
+                        "w-4 h-4 mr-1 transition-transform",
+                        connectionAdvancedOpen && "rotate-180",
+                      )}
+                    />
+                    Advanced &amp; debug
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-3 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2 border-t border-border/80 pt-3">
+                    <Button variant="outline" size="sm" onClick={() => refetchPeek()} disabled={peekLoading}>
+                      <RefreshCw className={cn("w-4 h-4 mr-2", peekLoading && "animate-spin")} />
+                      Refresh Drive list
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        const result = await refetchScope();
+                        const ok = result.status === "success";
+                        const logicalOk = ok && !isHtmlFallbackPayload(result.data);
+                        const payload = ok
+                          ? result.data
+                          : { error: result.error ? String(result.error) : "Unknown scope error" };
+                        appendLog("resolve-scope", logicalOk, payload);
+                        logButtonResult("Resolve Scope", logicalOk, payload);
+                        if (logicalOk) {
+                          toast({
+                            title: "Scope resolved",
+                            description: `${result.data?.rootName} (${result.data?.rootId})`,
+                          });
+                        } else {
+                          toast({
+                            title: "Scope resolve failed",
+                            description: result.error ? String(result.error) : "Unknown error",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                      disabled={scopeLoading}
+                    >
+                      <RefreshCw className={cn("w-4 h-4 mr-2", scopeLoading && "animate-spin")} />
+                      Resolve scope
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void runSync(true)}
+                      disabled={syncRunning !== null}
+                    >
+                      {syncRunning === "dry" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      Dry-run sync
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => void runVerify()} disabled={verifyRunning}>
+                      {verifyRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      Verify linkage
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => void runSampleSummary()} disabled={summaryRunning}>
+                      {summaryRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      Sample summary
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void debugGoogleDrive()}
+                      disabled={debugRunning}
+                    >
+                      {debugRunning ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Bug className="w-4 h-4 mr-2" />
+                      )}
+                      Debug Google Drive
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Bug className="w-4 h-4 text-muted-foreground" />
+                    <Label htmlFor="verbose-drive" className="text-sm cursor-pointer">
+                      Verbose API debug
+                    </Label>
+                    <Switch id="verbose-drive" checked={verboseDebug} onCheckedChange={setVerboseDebug} />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </>
           ) : (
-            <>
+            <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">Not linked</Badge>
               <Button size="sm" onClick={connectDrive} disabled={!status?.configured}>
                 <ExternalLink className="w-4 h-4 mr-2" />
                 Connect Google Drive
               </Button>
-            </>
-          )}
-          <div className="flex flex-wrap items-center gap-2 ml-auto">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void debugGoogleDrive()}
-              disabled={debugRunning}
-            >
-              {debugRunning ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Bug className="w-4 h-4 mr-2" />
-              )}
-              Debug Google Drive
-            </Button>
-            <div className="flex items-center gap-2">
-              <Bug className="w-4 h-4 text-muted-foreground" />
-              <Label htmlFor="verbose-drive" className="text-sm cursor-pointer">
-                Verbose API debug
-              </Label>
-              <Switch id="verbose-drive" checked={verboseDebug} onCheckedChange={setVerboseDebug} />
             </div>
-          </div>
+          )}
         </CardContent>
       </Card>
 

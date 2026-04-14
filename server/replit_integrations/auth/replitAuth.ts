@@ -54,6 +54,7 @@ async function upsertUser(claims: any) {
   await authStorage.upsertUser({
     id: claims["sub"],
     email: claims["email"],
+    passwordHash: "replit-oauth-placeholder",
     firstName: claims["first_name"],
     lastName: claims["last_name"],
     profileImageUrl: claims["profile_image_url"],

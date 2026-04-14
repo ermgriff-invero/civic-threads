@@ -21,6 +21,7 @@ import { runShadowTreeMapSummarization } from "./summarization-worker";
 import { runShadowTreeAgentQuery } from "./shadow-tree-agent";
 import { executeListFolderTool, executeReadDocumentTool } from "./shadow-tree-agent-tools";
 import { getShadowTreeHierarchy } from "./shadow-tree-hierarchy";
+import { getShadowTreePilotStats } from "./shadow-tree-stats";
 import { asNonStreamingChatCompletion, getOpenAI, userVisibleOpenAIRouteError } from "../../openai-client";
 
 function parseParentId(raw: unknown): string | null {
@@ -159,9 +160,23 @@ export function registerGoogleDriveConnectorRoutes(app: Express): void {
             dryRun,
             debug: verbose,
           });
+      let pilotStatsResult: Awaited<ReturnType<typeof getShadowTreePilotStats>> | null = null;
+      if (!dryRun) {
+        const connAfter = await storage.getGoogleDriveConnectionForTenant(tenantKey);
+        if (connAfter) {
+          pilotStatsResult = await getShadowTreePilotStats(tenantKey, connAfter.refreshToken, scopedRootName);
+        }
+      }
+      const shadowStatsOut =
+        pilotStatsResult?.ok === true
+          ? pilotStatsResult
+          : pilotStatsResult?.ok === false
+            ? { error: pilotStatsResult.error }
+            : null;
       return res.json({
         ok: true,
         ...result,
+        shadowStats: shadowStatsOut,
         ...(verbose ? { debug: { steps, at: new Date().toISOString() } } : {}),
       });
     } catch (error) {
@@ -433,6 +448,13 @@ export function registerGoogleDriveConnectorRoutes(app: Express): void {
         ? Math.max(1, Math.min(100, Math.floor(maxDocsRaw)))
         : Math.max(1, Math.min(100, Number.isFinite(envMaxDocs) ? envMaxDocs : 50));
 
+    const dirtyOnlyRaw = (req.body as { dirtyOnly?: unknown } | undefined)?.dirtyOnly;
+    const dirtyOnly =
+      dirtyOnlyRaw === true ||
+      dirtyOnlyRaw === "true" ||
+      dirtyOnlyRaw === 1 ||
+      dirtyOnlyRaw === "1";
+
     try {
       const result = await runShadowTreeMapSummarization({
         tenantKey,
@@ -442,18 +464,29 @@ export function registerGoogleDriveConnectorRoutes(app: Express): void {
         steps,
         maxCompletionTokens,
         maxDocs,
+        dirtyOnly,
       });
       return res.json({
         ok: true,
         tenantKey: result.tenantKey,
         model: result.model,
         maxCompletionTokens: result.maxCompletionTokens,
+        dirtyOnly: result.dirtyOnly,
+        finishedAt: result.finishedAt,
         scope: result.scope,
         docsConsidered: result.docsConsidered,
         docsSummarized: result.docsSummarized,
+        docsFirstSummarized: result.docsFirstSummarized,
+        docsRegenerated: result.docsRegenerated,
         docFailures: result.docFailures,
         folderFailures: result.folderFailures,
         foldersSummarized: result.foldersSummarized,
+        foldersFirstSummarized: result.foldersFirstSummarized,
+        foldersRegenerated: result.foldersRegenerated,
+        foldersDirtyClearedNoRollup: result.foldersDirtyClearedNoRollup,
+        mapSnapshot: result.mapSnapshot,
+        docRunLog: result.docRunLog,
+        folderRunLog: result.folderRunLog,
         ...(verbose ? { debug: { steps, at: new Date().toISOString() } } : {}),
       });
     } catch (error) {
@@ -687,6 +720,27 @@ export function registerGoogleDriveConnectorRoutes(app: Express): void {
       root: result.root,
       stats: result.stats,
     });
+  });
+
+  /** Pilot subtree: dirty folders, missing summaries, stale doc flags (DB vs map). */
+  r.get("/shadow-tree/stats", async (req: Request, res: Response) => {
+    if (!isGoogleDriveConfigured()) {
+      return sendConfigRequired(res);
+    }
+    const userId = req.session?.userId;
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const tenantKey = await tenantKeyForUserId(userId);
+    const conn = await storage.getGoogleDriveConnectionForTenant(tenantKey);
+    if (!conn) {
+      return res.status(400).json({ message: "No Google Drive linked for this tenant." });
+    }
+    const out = await getShadowTreePilotStats(tenantKey, conn.refreshToken, scopedRootName);
+    if (!out.ok) {
+      return res.status(400).json({ message: out.error, tenantKey });
+    }
+    return res.json(out);
   });
 
   /**

@@ -5,6 +5,11 @@ import type { KnowledgeFolder } from "@shared/schema";
 import { storage } from "../../storage";
 import { resolveRootFolderByExactName } from "./drive-api";
 import { previewDriveFile } from "./drive-preview";
+import {
+  getCachedReadDocumentPreview,
+  readDocumentCacheKey,
+  setCachedReadDocumentPreview,
+} from "./read-document-cache";
 
 const SCOPED_ROOT_NAME = "Civic Threads pilot";
 const MAX_TOOL_TEXT_CHARS = 24_000;
@@ -120,7 +125,26 @@ export async function executeReadDocumentTool(input: {
     return { ok: false, error: "Document is outside the Civic Threads pilot subtree." };
   }
 
-  const preview = await previewDriveFile(input.refreshToken, doc.externalId, undefined);
+  const cacheKey = readDocumentCacheKey(doc.id, doc.driveModifiedAt);
+  const cached = getCachedReadDocumentPreview(cacheKey);
+  const preview = cached
+    ? {
+        text: cached.text,
+        mimeType: cached.mimeType,
+        previewKind: cached.previewKind,
+        truncated: cached.truncated,
+        note: cached.note,
+      }
+    : await previewDriveFile(input.refreshToken, doc.externalId, undefined);
+  if (!cached) {
+    setCachedReadDocumentPreview(cacheKey, {
+      text: preview.text ?? "",
+      mimeType: preview.mimeType ?? null,
+      previewKind: preview.previewKind,
+      truncated: Boolean(preview.truncated),
+      note: preview.note ?? null,
+    });
+  }
   const text = preview.text ?? "";
   const clipped = clip(text, MAX_TOOL_TEXT_CHARS);
 

@@ -1,3 +1,4 @@
+import type OpenAI from "openai";
 import { retrieveSourceChunks, formatChunksForPrompt, buildSourcesMap, type SourceChunk } from "../rag/retrieval";
 import { parseClaudeCitations, CITATION_SYSTEM_PROMPT, type CitationResult } from "../rag/citations";
 import { getOpenAI } from "../openai-client";

@@ -1,3 +1,4 @@
+import type OpenAI from "openai";
 import { storage } from "./storage";
 import type { Thread, Document } from "@shared/schema";
 import { getOpenAI } from "./openai-client";

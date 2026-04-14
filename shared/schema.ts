@@ -165,6 +165,8 @@ export const googleDriveConnections = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     refreshToken: text("refresh_token").notNull(),
+    /** Baseline for Drive `changes.list` incremental hints (optional; updated after sync). */
+    driveChangesStartPageToken: text("drive_changes_start_page_token"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -189,6 +191,8 @@ export const knowledgeFolders = pgTable(
     externalId: text("external_id").notNull(),
     aiSummary: text("ai_summary"),
     isDirty: boolean("is_dirty").notNull().default(true),
+    /** Drive `modifiedTime` for mirrored folder (when available). */
+    driveModifiedAt: timestamp("drive_modified_at"),
     syncedAt: timestamp("synced_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -213,6 +217,7 @@ export const insertKnowledgeFolderSchema = z.object({
   externalId: z.string().min(1),
   aiSummary: z.string().optional().nullable(),
   isDirty: z.boolean().optional(),
+  driveModifiedAt: z.date().optional().nullable(),
   syncedAt: z.date().optional().nullable(),
 });
 
@@ -243,6 +248,10 @@ export const documents = pgTable("documents", {
   externalId: text("external_id"),
   /** `upload` = legacy manual upload; `gdrive` = mirrored from Google Drive. */
   sourceSystem: text("source_system").default("upload"),
+  /** Drive `modifiedTime` for mirrored files. */
+  driveModifiedAt: timestamp("drive_modified_at"),
+  /** When true, doc summary should be regenerated (set on Drive metadata change). */
+  docSummaryStale: boolean("doc_summary_stale").notNull().default(false),
 });
 
 export const insertDocumentSchema = z.object({
@@ -264,6 +273,8 @@ export const insertDocumentSchema = z.object({
   folderId: z.number().optional().nullable(),
   externalId: z.string().optional().nullable(),
   sourceSystem: z.string().optional().nullable(),
+  driveModifiedAt: z.date().optional().nullable(),
+  docSummaryStale: z.boolean().optional(),
 });
 
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;

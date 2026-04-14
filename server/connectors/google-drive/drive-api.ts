@@ -113,3 +113,60 @@ export async function resolveRootFolderByExactName(
     folderName: files[0].name ?? rootFolderName,
   };
 }
+
+export async function getDriveFileMetadata(
+  refreshToken: string,
+  fileId: string,
+): Promise<{ name: string; modifiedTime?: string; mimeType: string }> {
+  const drive = getDriveForRefreshToken(refreshToken);
+  const r = await drive.files.get({
+    fileId,
+    fields: "id, name, mimeType, modifiedTime",
+    supportsAllDrives: true,
+  });
+  return {
+    name: r.data.name ?? "(unnamed)",
+    mimeType: r.data.mimeType ?? "unknown",
+    modifiedTime: r.data.modifiedTime ?? undefined,
+  };
+}
+
+/** Start token for `changes.list` (call when no token stored yet). */
+export async function getDriveChangesStartPageToken(refreshToken: string): Promise<string> {
+  const drive = getDriveForRefreshToken(refreshToken);
+  const r = await drive.changes.getStartPageToken({ supportsAllDrives: true });
+  const t = r.data.startPageToken;
+  if (!t) throw new Error("Drive changes.getStartPageToken returned no startPageToken.");
+  return t;
+}
+
+export type DriveChangeEntry = { fileId: string; removed: boolean };
+
+/**
+ * One page of Drive changes. Use `newStartPageToken` from the last page as the next baseline.
+ */
+export async function listDriveChangesPage(
+  refreshToken: string,
+  pageToken: string,
+): Promise<{ changes: DriveChangeEntry[]; nextPageToken?: string; newStartPageToken?: string }> {
+  const drive = getDriveForRefreshToken(refreshToken);
+  const r = await drive.changes.list({
+    pageToken,
+    pageSize: 100,
+    fields: "nextPageToken, newStartPageToken, changes(fileId, removed)",
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const raw = r.data.changes ?? [];
+  const changes: DriveChangeEntry[] = raw
+    .map((c) => ({
+      fileId: c.fileId ?? "",
+      removed: Boolean(c.removed),
+    }))
+    .filter((c) => c.fileId.length > 0);
+  return {
+    changes,
+    nextPageToken: r.data.nextPageToken ?? undefined,
+    newStartPageToken: r.data.newStartPageToken ?? undefined,
+  };
+}

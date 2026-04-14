@@ -71,7 +71,12 @@ export interface IStorage {
 
   getGoogleDriveConnectionForTenant(tenantKey: string): Promise<GoogleDriveConnection | undefined>;
   upsertGoogleDriveConnection(row: InsertGoogleDriveConnection): Promise<GoogleDriveConnection>;
+  updateGoogleDriveConnectionChangesToken(tenantKey: string, token: string | null): Promise<void>;
   deleteGoogleDriveConnectionForTenant(tenantKey: string): Promise<void>;
+  /** Mark parent folders only (not `folderId`). Used after a folder row was already upserted dirty. */
+  markAncestorFoldersDirty(tenantKey: string, folderId: number): Promise<void>;
+  /** Mark `folderId` and all ancestor folders dirty (e.g. a document under `folderId` changed). */
+  markFolderAndAncestorsDirty(tenantKey: string, folderId: number): Promise<void>;
   getKnowledgeFolderByExternalId(tenantKey: string, externalId: string): Promise<KnowledgeFolder | undefined>;
   getKnowledgeFolderByIdForTenant(tenantKey: string, id: number): Promise<KnowledgeFolder | undefined>;
   getKnowledgeFoldersForTenant(tenantKey: string): Promise<KnowledgeFolder[]>;
@@ -79,12 +84,24 @@ export interface IStorage {
     row: InsertKnowledgeFolder & { tenantKey: string; externalId: string },
   ): Promise<KnowledgeFolder>;
   getDriveDocumentsByFolderIds(folderIds: number[]): Promise<Document[]>;
+  getDriveDocumentByExternalIdAndSource(
+    externalId: string,
+    sourceSystem?: "gdrive",
+  ): Promise<Document | undefined>;
   upsertDriveDocumentByExternalId(
     row: Pick<Document, "title" | "type" | "category"> &
       Partial<
         Pick<
           Document,
-          "description" | "folderId" | "mediaType" | "fileSize" | "content" | "processingStatus" | "indexed"
+          | "description"
+          | "folderId"
+          | "mediaType"
+          | "fileSize"
+          | "content"
+          | "processingStatus"
+          | "indexed"
+          | "driveModifiedAt"
+          | "docSummaryStale"
         >
       > & {
         externalId: string;
@@ -394,6 +411,39 @@ export class DatabaseStorage implements IStorage {
     return out;
   }
 
+  async updateGoogleDriveConnectionChangesToken(tenantKey: string, token: string | null): Promise<void> {
+    const now = new Date();
+    await db
+      .update(googleDriveConnections)
+      .set({ driveChangesStartPageToken: token, updatedAt: now })
+      .where(eq(googleDriveConnections.tenantKey, tenantKey));
+  }
+
+  async markAncestorFoldersDirty(tenantKey: string, folderId: number): Promise<void> {
+    const folders = await this.getKnowledgeFoldersForTenant(tenantKey);
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    let cur = byId.get(folderId);
+    let parentId = cur?.parentId ?? null;
+    const now = new Date();
+    while (parentId !== null) {
+      await db
+        .update(knowledgeFolders)
+        .set({ isDirty: true, updatedAt: now })
+        .where(and(eq(knowledgeFolders.tenantKey, tenantKey), eq(knowledgeFolders.id, parentId)));
+      cur = byId.get(parentId);
+      parentId = cur?.parentId ?? null;
+    }
+  }
+
+  async markFolderAndAncestorsDirty(tenantKey: string, folderId: number): Promise<void> {
+    const now = new Date();
+    await db
+      .update(knowledgeFolders)
+      .set({ isDirty: true, updatedAt: now })
+      .where(and(eq(knowledgeFolders.tenantKey, tenantKey), eq(knowledgeFolders.id, folderId)));
+    await this.markAncestorFoldersDirty(tenantKey, folderId);
+  }
+
   async deleteGoogleDriveConnectionForTenant(tenantKey: string): Promise<void> {
     await db.delete(googleDriveConnections).where(eq(googleDriveConnections.tenantKey, tenantKey));
   }
@@ -439,8 +489,11 @@ export class DatabaseStorage implements IStorage {
           title: row.title,
           parentId: row.parentId ?? null,
           connectionId: row.connectionId ?? null,
-          aiSummary: row.aiSummary ?? null,
+          // Sync omits aiSummary — do not wipe map text (same idea as documents.description on doc upsert).
+          aiSummary:
+            row.aiSummary !== undefined ? row.aiSummary : sql`${knowledgeFolders.aiSummary}`,
           isDirty: row.isDirty ?? true,
+          driveModifiedAt: row.driveModifiedAt ?? null,
           syncedAt: row.syncedAt ?? now,
           updatedAt: now,
         },
@@ -468,12 +521,32 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(documents.dateAdded));
   }
 
+  async getDriveDocumentByExternalIdAndSource(
+    externalId: string,
+    sourceSystem: "gdrive" = "gdrive",
+  ): Promise<Document | undefined> {
+    const [row] = await db
+      .select()
+      .from(documents)
+      .where(and(eq(documents.externalId, externalId), eq(documents.sourceSystem, sourceSystem)))
+      .limit(1);
+    return row ?? undefined;
+  }
+
   async upsertDriveDocumentByExternalId(
     row: Pick<Document, "title" | "type" | "category"> &
       Partial<
         Pick<
           Document,
-          "description" | "folderId" | "mediaType" | "fileSize" | "content" | "processingStatus" | "indexed"
+          | "description"
+          | "folderId"
+          | "mediaType"
+          | "fileSize"
+          | "content"
+          | "processingStatus"
+          | "indexed"
+          | "driveModifiedAt"
+          | "docSummaryStale"
         >
       > & {
         externalId: string;
@@ -503,6 +576,8 @@ export class DatabaseStorage implements IStorage {
           sourceSystem,
           mediaType: row.mediaType ?? null,
           fileSize: row.fileSize ?? null,
+          driveModifiedAt: row.driveModifiedAt ?? null,
+          docSummaryStale: row.docSummaryStale ?? true,
           tags: [],
           isActive: true,
         })
@@ -523,6 +598,8 @@ export class DatabaseStorage implements IStorage {
         content: row.content ?? existing.content,
         indexed: row.indexed ?? existing.indexed,
         processingStatus: row.processingStatus ?? existing.processingStatus,
+        driveModifiedAt: row.driveModifiedAt ?? existing.driveModifiedAt,
+        docSummaryStale: row.docSummaryStale ?? existing.docSummaryStale,
       })
       .where(eq(documents.id, existing.id))
       .returning();
@@ -791,7 +868,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateAgendaMeeting(id: number, updates: Partial<InsertAgendaMeeting>): Promise<AgendaMeeting | undefined> {
-    const [updated] = await db.update(agendaMeetings).set({ ...updates, updatedAt: new Date() }).where(eq(agendaMeetings.id, id)).returning();
+    const next: Record<string, unknown> = { ...updates, updatedAt: new Date() };
+    if (updates.meetingDate !== undefined) {
+      next.meetingDate =
+        typeof updates.meetingDate === "string" ? new Date(updates.meetingDate) : updates.meetingDate;
+    }
+    const [updated] = await db.update(agendaMeetings).set(next).where(eq(agendaMeetings.id, id)).returning();
     return updated || undefined;
   }
 

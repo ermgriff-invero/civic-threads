@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import OpenAI from "openai";
+import { toFile } from "openai/uploads";
 import { Buffer } from "node:buffer";
 
 export const openai = new OpenAI({
@@ -15,7 +16,7 @@ export async function generateImageBuffer(
     prompt,
     size,
   });
-  const base64 = response.data[0]?.b64_json ?? "";
+  const base64 = response.data?.[0]?.b64_json ?? "";
   return Buffer.from(base64, "base64");
 }
 
@@ -32,11 +33,11 @@ export async function editImages(
 
   const response = await openai.images.edit({
     model: "gpt-image-1",
-    image: images[0],
+    image: await toFile(images[0], "image.png"),
     prompt,
   });
 
-  const imageBase64 = response.data[0]?.b64_json ?? "";
+  const imageBase64 = response.data?.[0]?.b64_json ?? "";
   const imageBytes = Buffer.from(imageBase64, "base64");
 
   if (outputPath) {
